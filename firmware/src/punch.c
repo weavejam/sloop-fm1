@@ -8,7 +8,11 @@
  * 64 samples. Runs in the audio ISR (mix_block, fx.c). */
 #define PUNCH_N 32768u                    /* power of two */
 /* the transport clock (core.h clk_pos) places the loops and the gate on the grid */
+#if SLOOP_TUTTI
+static uint32_t clk_samples(void) { return TEMPO_SAMPLES(clk_pos); }   /* (hosted: at the host's tempo, core.h) */
+#else
 static uint32_t clk_samples(void) { return clk_pos / (uint32_t)song.g[G_BPM]; }   /* samples into the beat */
+#endif
 #define PUNCH_NFX 27u                     /* 16 on the white keys, 11 on the black keys (2.6) */
 enum { PX_LOOP4, PX_LOOP8, PX_LOOP16, PX_LOOP32, PX_STUT, PX_REV, PX_STOP, PX_HALF,
        PX_LPF, PX_HPF, PX_TEL, PX_CRUSH, PX_DOWN, PX_GATE, PX_ECHO, PX_WOBBLE,
@@ -52,7 +56,11 @@ static struct {
 static int px_loop(int32_t fx) { return fx <= PX_STUT || fx == PX_LOOP8T; }   /* on the grid */
 static int px_replay(int32_t fx) { return fx <= PX_HALF || fx == PX_LOOP8T; } /* replays a span of the ring */
 
+#if SLOOP_TUTTI
+static uint32_t beat_samples(void) { return TEMPO_SAMPLES(BEAT_U); }
+#else
 static uint32_t beat_samples(void) { return (uint32_t)FS * 60u / (uint32_t)song.g[G_BPM]; }
+#endif
 
 static int32_t ring_raw(uint32_t i) { return punch_ring[i & (PUNCH_N - 1u)]; }   /* the stored 16 bits (mix / 8) */
 static int32_t ring_at(uint32_t i) { return ring_raw(i) << 3; }

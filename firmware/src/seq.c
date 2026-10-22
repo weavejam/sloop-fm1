@@ -3025,6 +3025,11 @@ static void events_block(uint32_t n)
     }
     if (rec_wait && song.playing)
         rec_begin();                                /* started some other way: record now */
+#if SLOOP_TUTTI
+    if (tutti_bpm_q32 && !(mclk_on() && song.playing))
+        adv = tutti_units(n);                       /* hosted: the host's tempo, its fraction carried (core.h) */
+    else
+#endif
     adv = mclk_on() && song.playing ? mclk_adv(n) : n * (uint32_t)song.g[G_BPM];   /* (after a START) */
     clkout_block(n);                                  /* (2.7) CLK OUT */
     ft_block();

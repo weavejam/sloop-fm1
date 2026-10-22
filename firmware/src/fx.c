@@ -73,6 +73,10 @@ typedef struct {
 #define LIM_HOLD 48u
 #define LIM_REL 11                      /* the release after the hold: ~46 ms (12 before the hold: ~93 ms; the same loudness) */
 static lim_t lim_dac = {.env = LIM_T, .g = 32768}, lim_usb = {.env = LIM_T, .g = 32768};
+#if SLOOP_TUTTI
+static int32_t tutti_lim[CTL];          /* hosted: the DAC limiter's gain on each sample of the last block (Q15, 32768
+                                         * none), for the stems (web/plugin): they are limited as the mix was */
+#endif
 /* l, r: n (<= CTL) samples in; out: the n samples of CTL before, limited (before the knee) */
 static void lim_block(lim_t *s, int32_t *l, int32_t *r, uint32_t n)
 {
@@ -107,6 +111,10 @@ static void lim_block(lim_t *s, int32_t *l, int32_t *r, uint32_t n)
         w = (w + 1u) & (CTL - 1u);
         if (i + 1u == n)
             g = g1;
+#if SLOOP_TUTTI
+        if (s == &lim_dac)
+            tutti_lim[i] = g;
+#endif
         if (g < 32768) {                                /* (64-bit: |x| may be far above Q15. 2.6 fix: x >> 4 first cut
                                                          * the limited signal to 12 bits, a whistle on loud basses) */
             xl = (int32_t)(((int64_t)xl * g) >> 15);
@@ -864,10 +872,40 @@ static void mix_drums(uint32_t n, mixacc_t *mx)
     click_render(mx->l, mx->r, n);                        /* the metronome: its own voice (drums.c), any kit, any mute */
 }
 
+#if SLOOP_TUTTI
+/* hosted (web/plugin): each unit into sums of its own first (its dry L / R and its sends), then added into mx:
+ * integers, so mx is bit for bit what it is without (the order of the sums changes nothing); the plugin takes them
+ * for the units' stems (a part's, the drums') after mix_block */
+static mixacc_t tutti_acc[NPART + 1u];
+static void tutti_unit(uint32_t k, uint32_t n, mixacc_t *mx, int32_t *scratch)
+{
+    mixacc_t *u = &tutti_acc[k];
+    uint32_t i;
+    for (i = 0; i < n; i++)
+        u->l[i] = u->r[i] = u->sc[i] = u->sd[i] = u->sr[i] = 0;
+    if (k < NPART)
+        mix_part(&trk[k], n, u, scratch);
+    else
+        mix_drums(n, u);
+    for (i = 0; i < n; i++) {
+        mx->l[i] += u->l[i];
+        mx->r[i] += u->r[i];
+        mx->sc[i] += u->sc[i];
+        mx->sd[i] += u->sd[i];
+        mx->sr[i] += u->sr[i];
+    }
+}
+#endif
 /* the units of mask into the set mx, in their order */
 static void mix_units(uint32_t mask, uint32_t n, mixacc_t *mx, int32_t *scratch)
 {
     uint32_t k;
+#if SLOOP_TUTTI
+    for (k = 0; k <= NPART; k++)
+        if (mask & (1u << k))
+            tutti_unit(k, n, mx, scratch);
+    return;
+#endif
     for (k = 0; k < NPART; k++)
         if (mask & (1u << k))
             mix_part(&trk[k], n, mx, scratch);
@@ -1140,7 +1178,11 @@ static void texture_mix(int32_t *l, int32_t *r, uint32_t n)
         return;
     g0 = tx.g;                                          /* fades over ~0.1 s (238 a block), as DUST's bed */
     g1 = tx.g = clamp(tx.g + (on ? 238 : -238), 0, 32767);
+#if SLOOP_TUTTI
+    bar = tutti_bpm_q32 ? tutti_u2s(4u * BEAT_U) : (uint32_t)FS * 240u / (uint32_t)clamp(song.g[G_BPM], 20, 300);
+#else
     bar = (uint32_t)FS * 240u / (uint32_t)clamp(song.g[G_BPM], 20, 300);   /* a bar of 4/4, samples */
+#endif
     tx.ph += (uint32_t)((0xFFFFFFFFu / (bar * BARS[clamp(song.g[G_TXRATE], 0, 4)])) * n);
     lfo = sine_i(tx.ph - 0x40000000u);                  /* (from its top: a start at full) */
     depth = clamp(song.g[G_TXMOVE], 0, 127) * 258;
@@ -1183,7 +1225,11 @@ static void mix_block(int32_t *out, uint32_t n)
         thr_dly = (q & 2u) ? (thr_dly + 1928 > 32767 ? 32767 : thr_dly + 1928) : (thr_dly > 1928 ? thr_dly - 1928 : 0);
     }
     events_block(n);
+#if SLOOP_TUTTI
+    duck_block(tutti_bpm_q32 ? tutti_adv : n * (uint32_t)song.g[G_BPM]);   /* (hosted: the clock's own advance) */
+#else
     duck_block(n * (uint32_t)song.g[G_BPM]);
+#endif
     c1 = cpu1_on() ? units_split() : 0;                 /* core 1's units this block */
     if (c1) {
         for (i = 0; i < n; i++)
