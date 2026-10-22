@@ -14,9 +14,9 @@ int main(void)
     for (uint32_t i = 0; i < G_COUNT; i++) preview_global(i, config[4 + P_COUNT + i]);
     if (fread(transfer, FM6_PACKED, 1, stdin) != 1) return 1;
     preview_fm6(0);
-    preview_note(0, config[2], 1);
+    preview_note(0, config[2], 1, 0);
     for (uint32_t i = 0; i < (uint32_t)config[3]; i += CTL) {
-        if (i == (uint32_t)config[3] / 2u) preview_note(0, config[2], 0);
+        if (i == (uint32_t)config[3] / 2u) preview_note(0, config[2], 0, 0);
         if (fwrite(preview_render(), sizeof output, 1, stdout) != 1) return 1;
     }
     return 0;

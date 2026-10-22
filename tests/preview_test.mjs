@@ -162,4 +162,18 @@ for (let engine = 0; engine < 12; engine++) {
   assert.equal(m.state.sel, 0);
   m.stop(); console.log('inline edits: add/remove audible notes, independent tracks, and preserved drum lanes passed');
 }
+{
+  // preview_note's velocity (web/plugin's MIDI): softer notes are quieter; none (0) plays at 100 as before
+  const m = device(), energy = (vel) => {
+    const dsp = new FirmwareAudio(module), state = E.previewSnapshot(m.state);
+    state.tracks[0].p[17] = 0;
+    dsp.sync(state);
+    dsp.w.preview_note(0, 60, 1, vel);
+    return render(dsp, 8192).energy;
+  };
+  const soft = energy(20), loud = energy(127), plain = energy(0), hundred = energy(100);
+  assert(soft < loud * 0.8, `velocity 20 (${soft}) quieter than 127 (${loud})`);
+  assert.equal(plain, hundred, 'no velocity: 100');
+  m.stop(); console.log('note velocity: passed');
+}
 console.log('preview audio tests passed');

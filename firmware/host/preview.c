@@ -139,10 +139,11 @@ void preview_hit(uint32_t kit, uint32_t lane, uint32_t velocity)
     drum_on(LANE_NOTE[lane], (uint8_t)clamp(velocity, 1, 127));
     TDRUM->p[P_E0] = old;
 }
-void preview_note(uint32_t k, uint32_t note, uint32_t on)
+/* velocity 1..127 (the plugin's MIDI, web/plugin); 0 or none (the editor's preview): 100 as before */
+void preview_note(uint32_t k, uint32_t note, uint32_t on, uint32_t velocity)
 {
     if (k >= NTRK || note > 127) return;
-    if (on) input_on(&trk[k], note, 100);
+    if (on) input_on(&trk[k], note, velocity >= 1u && velocity <= 127u ? velocity : 100u);
     else input_off(&trk[k], note);
 }
 void preview_play(uint32_t on) { transport_req = on ? 1 : 2; }
