@@ -213,7 +213,9 @@ export async function render(module, state, req, sink, opts = {}) {
     for (const e of plan.events)
       if (!main.tutti_event(e.frame, e.status, e.d1, e.d2)) throw new RenderError("too-large", "too many MIDI events");
     // (use B: SLOOP's sequencer and the arranger never start, protocol 7b: only the host's MIDI plays; tutti_event
-    // takes no realtime messages, so the MIDI cannot start them either)
+    // takes no realtime messages, so the MIDI cannot start them either). The host's note lifetimes over SLOOP's
+    // latches: KBD HOLD / ARP HOLD off for the render, everything still held let go at toBeat (sloop_plugin.c)
+    main.tutti_use_b(plan.stop);
   } else {
     main.tutti_mode(PLAY_MODE[meta.play]);
     main.tutti_start(plan.stop);                       // use A: from frame 0, stopped at toBeat (the tail rings out)

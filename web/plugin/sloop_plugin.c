@@ -338,9 +338,11 @@ static void dev_clock(void)
 
 /* one block of CTL frames of the device (audio.c audio_block without the USB audio and the scope) */
 static float dev_l[CTL], dev_r[CTL];
+static void tt_live_check(void);
 static void dev_block(void)
 {
     uint32_t k;
+    tt_live_check();                                  /* (before the main loop: its autosave never sees a section) */
     dev_clock();
     mix_block(dev_blk, CTL);
     for (k = 0; k < CTL; k++) {
@@ -436,6 +438,8 @@ EXPORT uint32_t tutti_tempo(double bpm)
 /* what is only in RAM into the flash now (project.c persist_flush_now, without its wait for quiet): the sections and
  * the song (the settings), the working project as the autosave (while the song plays: the loop it put aside), the
  * settings with the SYN kits not stored yet. Then the flash's storage sectors are the whole state. 1 = written */
+static project_t tt_keep;                          /* the working pattern put aside while a section is previewed */
+static uint8_t tt_kept;                            /* (tutti_live_mode) */
 EXPORT uint32_t tutti_snapshot(void)
 {
     persist_t p;
@@ -454,6 +458,8 @@ EXPORT uint32_t tutti_snapshot(void)
     }
     if (arrangement_clock.running && song_kept)
         w = &song_keep;                               /* (the song plays sections: the loop you made is aside) */
+    else if (tt_kept)
+        w = &tt_keep;                                 /* (a section previewed: likewise) */
     else
         proj_capture(&autosave_buf);
     if (w->sum != autosave_hash) {
@@ -482,6 +488,8 @@ EXPORT uint32_t tutti_sig(void)
     uint32_t h = 2166136261u, i, none = 0;
     if (arrangement_clock.running && song_kept)
         cur = song_keep;
+    else if (tt_kept)
+        cur = tt_keep;                                /* (a section previewed: the pattern is aside) */
     else
         proj_capture(&cur);
     h = sig_mix(h, &cur.sum, 4);
@@ -564,9 +572,9 @@ EXPORT void tutti_start(uint32_t stop)
 /* use B: MIDI events at frames from frame 0, in time order, each played with the block whose start is nearest (the
  * firmware's control rate is a block of CTL frames: within CTL / 2). The sequencer never runs: a channel plays its
  * part straight (as firmware/host/preview.c preview_note): MIDI channels 0..2 the synth parts 1..3 (the notes as the
- * keys play them: arp, chords, KBD HOLD and the pedal as set), 3 the drum track (a GM note: its lane's sound, as
- * MIDI IN maps it (drums.c lane_of_note), through voice.c trk_note_on and drums.c drum_on at the note's velocity, not
- * MIDI IN's four levels); CC (64 the pedal; the SLOOP CC map, seq.c midi_cc) and pitch bend on those channels too;
+ * keys play them: arp, chords and the pedal as set; KBD HOLD and ARP HOLD off, tutti_use_b), 3 the drum track (a GM
+ * note: its lane's sound, as MIDI IN maps it (drums.c lane_of_note), through voice.c trk_note_on and drums.c drum_on
+ * at the note's velocity, not MIDI IN's four levels); CC (64 the pedal; the SLOOP CC map, seq.c midi_cc) and pitch bend on those channels too;
  * other channels are ignored */
 #define TT_NEV 65536u
 static struct { uint32_t frame; uint8_t st, d1, d2; } tt_ev[TT_NEV];
@@ -582,6 +590,42 @@ EXPORT uint32_t tutti_event(uint32_t frame, uint32_t status, uint32_t d1, uint32
     tt_nev++;
     return 1;
 }
+/* use B honours the host's note lifetimes over SLOOP's latches (a runtime override, as SYNC off in tutti_boot: the
+ * state's setting stays, the hardware build is untouched): KBD HOLD and ARP HOLD (ARP 2 > HOLD, P_AHOLD) are off on
+ * the synth tracks for the whole render (so a host note-off lets its note go, and the arp plays the notes the host
+ * holds, no more), and at toBeat (tutti_use_b's stop: the nearest block) every note the host still holds, the pedal
+ * and any latch are let go -- note-offs only, so the releases and the FX tails ring out */
+static uint32_t tt_useb, tt_end = ~0u;
+static uint32_t tt_down[NPART][4];                 /* the host's notes down, per synth track (bit per MIDI note) */
+static void tt_unhold(void)
+{
+    uint32_t k;
+    for (k = 0; k < NPART; k++)
+        trk[k].p[P_AHOLD] = 0;                        /* (the ISR then drops a chord latched before: seq.c aholdp) */
+}
+EXPORT void tutti_use_b(uint32_t stop)
+{
+    tt_useb = 1;
+    tt_end = stop;
+    tt_unhold();
+}
+static void tt_release_all(void)
+{
+    uint32_t k, n;
+    for (k = 0; k < NPART; k++) {
+        track_t *t = &trk[k];
+        ch_sus[k] = 0;
+        sus_set(t, 0);                                /* (the pedal up: what it held ends) */
+        for (n = 0; n < 128u; n++)
+            if ((tt_down[k][n >> 5] >> (n & 31u)) & 1u)
+                input_off(t, n);
+        memset(tt_down[k], 0, sizeof tt_down[k]);
+        kh_release(t);
+        t->nheld = 0;
+        t->arp_phys = 0;
+        arp_end(t);                                   /* (the arp's note off: no new arp step, its release rings) */
+    }
+}
 static void tt_play(uint32_t st, uint32_t d1, uint32_t d2)
 {
     uint32_t ch = st & 15u, type = st & 0xF0u;
@@ -592,11 +636,15 @@ static void tt_play(uint32_t st, uint32_t d1, uint32_t d2)
     if (type == 0x90u && d2) {
         if (ch == TRK_DRUM)
             trk_note_on(t, LANE_NOTE[lane_of_note(d1)], d2);   /* (its lane's sound, as MIDI IN takes a GM note) */
-        else
+        else {
+            tt_down[ch][d1 >> 5] |= 1u << (d1 & 31u);
             input_on(t, d1, d2);
+        }
     } else if (type == 0x80u || type == 0x90u) {
-        if (ch != TRK_DRUM)
+        if (ch != TRK_DRUM) {
+            tt_down[ch][d1 >> 5] &= ~(1u << (d1 & 31u));
             input_off(t, d1);
+        }
     } else if (type == 0xB0u) {
         if (d1 == 0u)
             return;                                   /* (Bank Select: no Program Change comes) */
@@ -612,6 +660,8 @@ static void tt_events(uint32_t f0)
     while (tt_evr < tt_nev && tt_ev[tt_evr].frame < f0 + CTL / 2u) {
         tt_play(tt_ev[tt_evr].st, tt_ev[tt_evr].d1, tt_ev[tt_evr].d2);
         tt_evr++;
+        if (tt_useb)
+            tt_unhold();                              /* (a learned CC may have set HOLD: off again) */
     }
 }
 
@@ -629,6 +679,10 @@ EXPORT void tutti_render(uint32_t nblocks, uint32_t capture)
     for (b = 0; b < nblocks; b++) {
         uint32_t f0 = dev_frames;
         tt_events(f0);
+        if (tt_end != ~0u && f0 + CTL / 2u > tt_end) {
+            tt_release_all();                         /* (use B at toBeat: nothing held into the tail) */
+            tt_end = ~0u;
+        }
         if (tt_stop != ~0u && f0 + CTL / 2u > tt_stop) {
             transport_req = 2;                        /* (seq.c events_block: seq_stop, before the steps) */
             tt_stop = ~0u;
@@ -716,16 +770,22 @@ EXPORT void tutti_stem_render(uint32_t nblocks)
  * tutti_seek_run runs it a bounded number of blocks per call (the worklet: per render quantum, silent until it is
  * done), so a seek minutes into a song never stalls the audio thread */
 static uint32_t tt_seek, tt_seeking;               /* blocks still to run; a seek is on */
+static uint32_t tt_live;                           /* what PLAY plays (tutti_live_mode) */
+static void tt_section(uint32_t s);
+static void tt_unkeep(void);
 EXPORT void tutti_seek(uint32_t play, uint32_t frames)
 {
     if (song.playing)
         seq_stop();
     transport_req = 0;
     tt_seek = tt_seeking = 0;
+    tt_unkeep();
     if (!play)
         return;
     song.rec = 0;
     rec_wait = 0;
+    if (tt_live >= 2u && proj_ok(&proj_slot[tt_live - 2u]))
+        tt_section(tt_live - 2u);
     seq_start();
     tt_seek = frames / CTL;
     tt_seeking = 1;
@@ -747,8 +807,39 @@ EXPORT uint32_t tutti_seek_run(uint32_t max, uint32_t more)
                 voice_kill(&trk[i].v[k]);
     return 0;
 }
-/* which the live device plays from PLAY: the song (1: SONG's order, when it is valid) or the loop (0) */
-EXPORT void tutti_live_song(uint32_t on) { arrangement_enabled = (uint8_t)(on && arr_valid(&arrangement, arrangement_ready())); }
+/* what the live device plays from the host's PLAY: tutti_mode's modes (the state's `play`, as a render plays it): 0
+ * the song (SONG's order, when it is valid; else the loop), 1 the working pattern, 2 + s section s (when it is
+ * stored; else the working pattern). Nothing changes until the next tutti_seek */
+EXPORT void tutti_live_mode(uint32_t mode)
+{
+    tt_live = mode < 6u ? mode : 1u;
+    arrangement_enabled = (uint8_t)(tt_live == 0u && arr_valid(&arrangement, arrangement_ready()));
+}
+/* a section previewed (tutti_seek, stopped): it plays over the tracks, the working pattern put aside (tt_keep) */
+static void tt_section(uint32_t s)
+{
+    if (!tt_kept) {
+        proj_capture(&tt_keep);
+        tt_kept = 1;
+    }
+    project_apply(&proj_slot[s]);
+    transport_req = 0;                                /* (project_apply asks for a stop: it is stopped) */
+}
+/* stopped: the working pattern back (project_apply: what the section played let go, as a load does) */
+static void tt_unkeep(void)
+{
+    if (!tt_kept)
+        return;
+    tt_kept = 0;
+    project_apply(&tt_keep);
+    transport_req = 0;
+}
+/* (dev_render) the preview stopped by other than the host (the editor's STOP): the working pattern back */
+static void tt_live_check(void)
+{
+    if (tt_kept && !song.playing && !transport_req && !tt_seeking)
+        tt_unkeep();
+}
 
 /* ---- for the tests (web/plugin/plugin_test.mjs) */
 EXPORT uint32_t tutti_test_proj_ok(uint32_t s) { return proj_ok(&proj_slot[s & 3u]); }

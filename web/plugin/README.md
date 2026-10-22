@@ -32,6 +32,9 @@ pages may embed the build, and `site.mjs` writes that one list into both the pag
 | `production` | exactly `https://tuttidaw.com`, `https://www.tuttidaw.com` | `build/plugin-site/` |
 | `preview` | those and `http://localhost:<any port>` (tuttidaw's dev server, `dev/`) | `build/plugin-site-preview/` |
 
+Deployed (Cloudflare Pages): production at `https://sloop.plugins.tooljams.com`, preview at
+`https://sloop-preview.plugins.tooljams.com` (the manifest: `/tutti-plugin.json` on each).
+
 `.github/workflows/plugin-site.yml` builds both from one wasm, runs the tests, and keeps the production site as an
 artifact on a push to main (the only event a deployment may come from), the preview site on a pull request.
 
@@ -161,6 +164,13 @@ PLAY plays with tuttidaw's transport:
 The arranger (`FELUCCA_ARRANGER`) is in this build (it was not in the preview's wasm). The transport stops at `toBeat`
 (the nearest block): the notes are released there and the tail only rings out.
 
+The page's preview with tuttidaw's transport plays the same (`sloop_plugin.c tutti_live_mode`, the worklet's `mode`
+message, the full `play`): the song, the working pattern, or a section. A section plays over the tracks while the
+transport plays, the working pattern put aside meanwhile and back when it stops (whatever stops it), as SLOOP's song
+mode keeps it; the state (`tutti_sig`, `tutti_snapshot`) is the pattern put aside all the while, so previewing a
+section is never a new revision (an edit made while a section plays is to the section's copy and goes with it, as in
+song mode). A change of the selector while playing starts again where the transport is.
+
 ## Use B: the host's MIDI
 
 With `input` the sequencer and the arranger never run (protocol 7b: only the host's MIDI plays; the state gives the
@@ -170,7 +180,7 @@ routing (GLO > MIDI), so the manifest's `midiChannels` is always right:
 
 | MIDI channel (0-based) | Plays |
 | --- | --- |
-| 0, 1, 2 | synth track 1, 2, 3: notes as the keys play them (`input_on` / `input_off`: velocity, the arp, CHORD, KBD HOLD as the track has them), CC 64 the pedal, the SLOOP CC map (seq.c `midi_cc`: 5 GLIDE, 7 LEVEL, 10 PAN, 11 EXPRESSION, 71 .. 75, 74 FILTER, 91 / 93 / 94 the sends), pitch bend |
+| 0, 1, 2 | synth track 1, 2, 3: notes as the keys play them (`input_on` / `input_off`: velocity, the arp, CHORD as the track has them; KBD HOLD and ARP HOLD off, see Latches), CC 64 the pedal, the SLOOP CC map (seq.c `midi_cc`: 5 GLIDE, 7 LEVEL, 10 PAN, 11 EXPRESSION, 71 .. 75, 74 FILTER, 91 / 93 / 94 the sends), pitch bend |
 | 3 | the drum track: a note-on plays the lane its GM note maps to (as SLOOP's MIDI IN maps it, `drums.c lane_of_note`), through `trk_note_on` and `drums.c drum_on` at the note's velocity (MIDI IN would take four levels); the CC map as above; note-offs and bend ignored |
 | 4 .. 15 | nothing |
 
@@ -183,6 +193,13 @@ the drum track's (any of the factory kits, the SYN kits, the user kits), with th
 Notes are released at `min(end, toBeat)`; a note's off comes at least a block (32 frames) after its on, so a note of
 length 0 (or less) still sounds and is let go, never off before on; moved that way, it still comes before the next
 note of the same pitch on the same channel.
+
+**Latches.** A use B render honours the host's note lifetimes over SLOOP's latches (`tutti_use_b`, a runtime override
+like SYNC off: the state keeps its setting, the hardware build is unchanged): KBD HOLD and ARP HOLD (ARP 2 > HOLD) are
+off on the synth tracks for the render (set again by a learned CC: off again), so a host note-off lets its note go and
+the arp plays only the notes the host holds; at `toBeat` every note still held, the pedal and the arp are let go (note
+offs only: the releases and the FX tails ring out). `plugin_test.mjs`: a state saved with KBD HOLD and ARP HOLD renders
+the same as without them, only a decaying tail after each note's end.
 
 ## Sample rates
 

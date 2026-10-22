@@ -74,7 +74,6 @@ const waits = new Map();
 const status = window.sloopPlugin = { ready: false, playing: false, sig: 0 };   // (what the page's SLOOP does, to look at)
 const send = (m, transfer) => { if (node) node.port.postMessage(m, transfer || []); };
 const tempo = new PreviewTempo((bpm) => send({ type: "tutti-tempo", bpm }));
-const playsSong = (m) => m.play === "auto" || m.play === "song";
 
 // the editor's MIDI to this SLOOP (tutti-host.js), once it runs
 function backend(d) {
@@ -173,7 +172,7 @@ const live = {
     const first = !node.loaded;
     node.loaded = true;
     send({ type: "load", wasm: first ? wasmBytes.slice(0) : null, state, master: +($("tt-vol") ? $("tt-vol").value : 724),
-           song: playsSong(meta) });
+           mode: PLAY_MODE[meta.play] });
     if (ac.state !== "running") { try { await ac.resume(); } catch {} }
     ac.onstatechange = audioState;
     audioState();
@@ -207,7 +206,7 @@ const live = {
 // what a render plays (the state's meta): a change is a change of the state
 function setPlay(p) {
   meta = cleanMeta({ ...meta, play: p });
-  send({ type: "song", on: playsSong(meta) });
+  send({ type: "mode", mode: PLAY_MODE[meta.play] });   // (the preview plays what a render plays: a section too)
   changed();
 }
 

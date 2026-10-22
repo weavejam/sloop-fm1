@@ -375,7 +375,7 @@ if (!FAST) {
 
 // ---- the preview's seek: bounded work per call, the time meanwhile added; where it gets to the same as one long seek
 {
-  const live = async () => { const d = await Dev.make({ sectors: song.sectors }); d.ex.tutti_live_song(1); d.ex.tutti_tempo(123.45); return d.ex; };
+  const live = async () => { const d = await Dev.make({ sectors: song.sectors }); d.ex.tutti_live_mode(PLAY_MODE.song); d.ex.tutti_tempo(123.45); return d.ex; };
   const a = await live(), b = await live(), B = 1024, Q = 128 / 32, F = 44100 * 150;   // 2.5 minutes in (worklet SEEK_BLOCKS)
   b.tutti_seek(1, F);
   let left = b.tutti_seek_run(B, 0), calls = 1, bounded = left === Math.floor(F / 32) - B;
@@ -910,6 +910,71 @@ const collect = (h, renderId) => {                    // the chunks of a render,
   const tail = (x) => rms(x.subarray(end + 44100));
   check(`sustain: the tail past toBeat as without the pedal (rms ${tail(held).toExponential(2)}, no pedal ${tail(free).toExponential(2)})`,
         rms(free.subarray(end - 22050, end)) > 1e-3 && tail(held) <= tail(free) * 1.05 + 1e-6);
+}
+
+// ---- use B with a saved KBD HOLD (track 1) and ARP HOLD (track 2, the arp UP): the host's note-offs let the notes go
+// all the same (a runtime override, the state keeps HOLD on), and at toBeat nothing is held: past a note's end and its
+// release only a decaying tail, no new note (the arp stops); renders the same as without HOLD
+{
+  const P_AMODE = 17, P_AHOLD = 23;                    // (core.h)
+  const make = async (hold) => {
+    const d = await Dev.make();
+    d.clearAll();
+    d.rq(E.req.trackParam(1, P_AMODE, 1));             // (track 2: ARP UP)
+    if (hold) { d.rq(E.req.trackParam(0, P_AHOLD, 1)); d.rq(E.req.trackParam(1, P_AHOLD, 1)); }
+    const st = d.state();
+    return { st, hold: [0, 1].map((k) => d.rq(E.req.trackParam(k, P_AHOLD)).value) };
+  };
+  const held = await make(true), free = await make(false);
+  const n = (beat, lengthBeats, pitch, channel) => ({ beat, lengthBeats, pitch, velocity: 110, channel });
+  const inp = { notes: [n(0, 1, 60, 0), n(0, 1, 60, 1), n(0, 1, 64, 1), n(0, 1, 67, 1), n(2.5, 4, 62, 0), n(2.5, 4, 72, 1)],
+                cc: [], pitchBend: [], preRollBeats: 0 };
+  const r = req({ input: inp, toBeat: 4, tailMs: 4000, outputs: ["mix", "t1", "t2"] });
+  const a = (await renderAll(held.st, r)).out, b = (await renderAll(free.st, r)).out;
+  const at = (beat) => Math.round(beat * 0.5 * 44100);
+  // from a note's end on, in 250 ms windows: never much louder than the window before (no new note: the delay's echoes
+  // may wobble), and down by 30 dB within 3 s (the release and the FX tails ring out, then nothing)
+  const W = 11025, prof = (x, from) => Array.from({ length: 12 }, (_, i) => rms(x.subarray(from + i * W, from + (i + 1) * W)));
+  const decays = (x, from) => { const v = prof(x, from); return v.every((y, i) => !i || y <= v[i - 1] * 1.5 + 1e-6) && v[11] < v[0] / 30; };
+  const t1 = decays(a.t1[0], at(4)), t2 = decays(a.t2[0], at(4));
+  const gap = rms(a.t2[0].subarray(at(2), at(2.5))), first = rms(a.t2[0].subarray(at(0), at(1)));
+  const end = rms(a.mix[0].subarray(a.mix[0].length - 22050)), body = rms(a.mix[0].subarray(0, at(1)));
+  if (process.env.VERBOSE) console.log(prof(a.t1[0], at(4)).map((x) => x.toExponential(1)).join(" "), "|", prof(a.t2[0], at(4)).map((x) => x.toExponential(1)).join(" "), gap, first);
+  check(`use B + KBD HOLD / ARP HOLD saved (${held.hold.join(",")}): after each note's end only a decaying tail, the arp stopped (t1 ${t1}, t2 ${t2})`,
+        held.hold.join() === "1,1" && t1 && t2 && gap < first / 10 && body > 1e-3 && end < body / 100);
+  check("use B + HOLD: the same render as without HOLD (the host's note lifetimes), the state's HOLD unchanged",
+        ["mix", "t1", "t2"].every((o) => same(a[o][0], b[o][0]) && same(a[o][1], b[o][1])) && free.hold.join() === "0,0");
+}
+
+// ---- the preview plays what a render plays: "B" (a section) previews section B, not the working pattern; the working
+// pattern put aside meanwhile and back at the stop; no new revision (the state's signature the same throughout)
+{
+  const d = await Dev.make({ sectors: song.sectors }), ex = d.ex;
+  d.run(300);
+  const sig0 = ex.tutti_sig() >>> 0, pat0 = d.state().sectors;
+  ex.dev_master(1023);
+  ex.tutti_tempo(120);
+  ex.tutti_live_mode(PLAY_MODE.B);
+  ex.tutti_seek(1, 0);
+  while (ex.tutti_seek_run(1024, 0));
+  const n = 1380 * 128, live = new Float32Array(n);
+  for (let i = 0; i < n; i += 128) { ex.dev_render(128); live.set(new Float32Array(ex.memory.buffer, ex.dev_out_l(), 128), i); }
+  const sigPlaying = ex.tutti_sig() >>> 0;
+  ex.tutti_seek(0, 0);
+  d.run(300);
+  const sig1 = ex.tutti_sig() >>> 0, pat1 = d.state().sectors;
+  const p = (play) => ({ sectors: song.sectors, meta: { play } });
+  const rB = (await renderAll(p("B"), req({ toBeat: 8 }))).out.mix[0], rP = (await renderAll(p("pattern"), req({ toBeat: 8 }))).out.mix[0];
+  // the envelope (rms per 10 ms), the live one a block later (the render drops the limiter's look-ahead)
+  const env = (x, off = 0) => Array.from({ length: Math.floor((n - 882) / 441) }, (_, i) => rms(x.subarray(off + i * 441, off + i * 441 + 441)));
+  const corr = (u, v) => { const m = (w) => w.reduce((s, x) => s + x, 0) / w.length, mu = m(u), mv = m(v);
+    let s = 0, su = 0, sv = 0; for (let i = 0; i < u.length; i++) { s += (u[i] - mu) * (v[i] - mv); su += (u[i] - mu) ** 2; sv += (v[i] - mv) ** 2; } return s / Math.sqrt(su * sv); };
+  const eL = env(live, 32), cB = corr(eL, env(rB)), cP = corr(eL, env(rP));
+  const exact = same(live.subarray(32, n), rB.subarray(0, n - 32));
+  check(`preview of "B": section B as the render plays it (${exact ? "bit for bit" : `envelope r ${cB.toFixed(3)}`}; the working pattern's r ${cP.toFixed(3)})`,
+        peak(live) > 0.05 && (exact || (cB > 0.95 && cB > cP + 0.2)));
+  check("preview of a section: the state's signature unchanged while it plays and after; the working pattern back at the stop",
+        sigPlaying === sig0 && sig1 === sig0 && Object.keys(pat0).every((k) => same(pat0[k], pat1[k])));
 }
 
 // ---- MIDI sync inert: a song saved with GLO > SYNC set to an external clock plays at the host's tempo, hosted and in a

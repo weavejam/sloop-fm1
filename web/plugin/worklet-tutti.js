@@ -8,7 +8,9 @@
 //                   one), the next when it has taken the last
 //   midi            {data}: a channel message (the editor's keys)
 //   master          {k10}: the page's volume (MASTER as its knob, 0..1023)
-//   song            {on}: PLAY plays the song (the arranger) or the loop (the state's `play`)
+//   mode            {mode}: what PLAY plays (the state's `play` as renderer.js PLAY_MODE has it: the song, the working
+//                   pattern, a section; sloop_plugin.c tutti_live_mode), from the next start; playing, it starts again
+//                   where it is
 //   tutti-tempo     {bpm}: the host's tempo (fractional)
 //   tutti-play      {gen, playing, atFrame, pos}: the host's transport, listen-only: play from `pos` (frames of 44.1 kHz
 //                   from beat 0) at this context's frame `atFrame`; the same generation again: only a drift of over
@@ -31,7 +33,7 @@ class SloopTutti extends AudioWorkletProcessor {
     this.ex = null;
     this.bpm = 0;
     this.master = 724;                                 // MASTER, 0..1023 (sloop_plugin.c dev_master)
-    this.song = 0;
+    this.mode = 0;
     this.sx = [];                                      // frames waiting for the device
     this.play = null;                                  // a start to come: {gen, atFrame, pos}
     this.at = null;                                    // playing: {gen, frame, pos} (pos at that frame)
@@ -51,7 +53,7 @@ class SloopTutti extends AudioWorkletProcessor {
         return;
       }
       if (m.type === "master") { this.master = m.k10; if (this.ex) this.ex.dev_master(m.k10); return; }
-      if (m.type === "song") { this.song = m.on ? 1 : 0; if (this.ex) this.ex.tutti_live_song(this.song); return; }
+      if (m.type === "mode") { this.mode = m.mode >>> 0; if (this.ex) this.setMode(); return; }
       const ex = this.ex;
       if (!ex) return;
       if (m.type === "sysex") { this.sx.push(m.data); this.pump(); return; }
@@ -80,8 +82,8 @@ class SloopTutti extends AudioWorkletProcessor {
     if (m.master != null) this.master = m.master;
     ex.dev_master(this.master);
     if (this.bpm) ex.tutti_tempo(this.bpm);
-    if (m.song != null) this.song = m.song ? 1 : 0;
-    ex.tutti_live_song(this.song);
+    if (m.mode != null) this.mode = m.mode >>> 0;
+    ex.tutti_live_mode(this.mode);
     this.ex = ex;
     this.L = new Float32Array(ex.memory.buffer, ex.dev_out_l(), 128);
     this.R = new Float32Array(ex.memory.buffer, ex.dev_out_r(), 128);
@@ -112,6 +114,13 @@ class SloopTutti extends AudioWorkletProcessor {
     this.port.postMessage({ type: "sysex", data }, [data.buffer]);
   }
 
+  // what PLAY plays changed: playing, the same run starts again where it is now (the next quantum), with it
+  setMode() {
+    this.ex.tutti_live_mode(this.mode);
+    const run = this.at || this.seeking;
+    if (run && !this.play) this.play = { gen: run.gen, atFrame: currentFrame, pos: run.pos + (currentFrame - run.frame) };
+  }
+
   schedule(m) {
     if (!m.playing) {
       this.play = null;
@@ -135,7 +144,7 @@ class SloopTutti extends AudioWorkletProcessor {
     if (p && currentFrame + 128 > p.atFrame) {         // (the quantum it starts in)
       this.play = this.at = null;
       const pos = Math.max(0, Math.round(p.pos + (currentFrame - p.atFrame)));
-      ex.tutti_live_song(this.song);                   // (the song as it is now: sections stored since count)
+      ex.tutti_live_mode(this.mode);                   // (as it is now: a song or a section stored since counts)
       ex.tutti_seek(1, pos);
       this.seeking = { gen: p.gen, frame: currentFrame, pos };
       left = ex.tutti_seek_run(SEEK_BLOCKS, 0);
