@@ -5293,10 +5293,14 @@ function showTab(name) {
   renderPanels();
   if (name === "tracks" && prev !== "tracks" && hasTracks() && dev.dump) op(readMixer);
 }
+/* a page that runs a SLOOP of its own may show a second page beside the selected one (web/plugin, wide frames:
+   HOST.attach's beside); null: none, as everywhere else */
+let besideTab = null;
 function renderPanels() {
   /* the Tracks tab only with a four-track firmware */
   const tracksOk = !dev || hasTracks() || !dev.info;
   const want = tab === "tracks" && dev && dev.info && !hasTracks() ? "sound" : tab;
+  const side = besideTab && besideTab !== want && (besideTab !== "tracks" || !dev || hasTracks()) ? besideTab : null;
   for (const b of $("tabs").querySelectorAll("button[data-tab]")) {
     const on = b.dataset.tab === want;
     b.setAttribute("aria-selected", on ? "true" : "false");
@@ -5306,15 +5310,16 @@ function renderPanels() {
   const ready = !!dev && !!dev.dump;
   let hint = "";
   for (const p of document.querySelectorAll(".panel")) {
-    const mine = p.dataset.tab === want;
-    let show = mine && (!("dev" in p.dataset) || ready);
+    const mine = p.dataset.tab === want, beside = !!side && p.dataset.tab === side;
+    p.classList.toggle("beside", beside);
+    let show = (mine || beside) && (!("dev" in p.dataset) || ready);
     if (mine && "dev" in p.dataset && !dev) hint = "needDevice";   /* (while connecting the status line says it) */
     if (show && (want === "samples" || want === "kits") && !dev.smp) { show = false; hint = "smpNone"; }
     p.hidden = !show;
   }
   $("hint").hidden = !hint;
   if (hint) $("hint").textContent = t(MOCK && hint === "needDevice" ? "previewLocalConnect" : hint);
-  $("trackbar").hidden = !(ready && hasTracks() && TRACK_TABS.has(want));
+  $("trackbar").hidden = !(ready && hasTracks() && (TRACK_TABS.has(want) || TRACK_TABS.has(side)));
   const nb = $("tabs").querySelector(`button[data-tab="${want}"]`);   /* the page's title: its name in the side bar */
   $("pagetitle").textContent = nb ? t(nb.dataset.t) : "";
   if (want === "kits") renderKits();
@@ -5324,7 +5329,7 @@ function renderPanels() {
   if (want === "theme") renderTheme();                  /* (2.7) works without a device too */
   if (want === "live" && ready) lvShow(); else lvHide();   /* (2.7) the LIVE page reads the FM-1 while it shows */
   $("preview").hidden = !MOCK || want === "live";
-  if (want === "song" && ready) {                      /* (2.5) read the song order once per connection */
+  if ((want === "song" || side === "song") && ready) {   /* (2.5) read the song order once per connection */
     if (SG.dev !== dev) { Object.assign(SG, { dev, rows: null, err: "", dirty: false }); op(readSong); } else renderSong();
   }
   renderPreview();
@@ -5344,6 +5349,9 @@ window.addEventListener("hashchange", () => { const h = location.hash.slice(1); 
 
 const QS = new URLSearchParams(location.search);
 const MOCK = QS.get("mock") === "1";
+/* a page that runs a SLOOP of its own (web/plugin: the tuttidaw plugin) sets window.sloopHost before this script: its
+   MIDI access (one port pair, that SLOOP) instead of Web MIDI, and attach() is told how to connect */
+const HOST = !MOCK && window.sloopHost && window.sloopHost.access ? window.sloopHost : null;
 $("mock").hidden = !MOCK;
 let mock = null;
 
@@ -5946,12 +5954,13 @@ const drumGrid = () => isDrum() && !!dev.info.proto && dev.info.proto >= 5;
 /* -------------------------------------------------------------- MIDI --- */
 async function connect() {
   wantConnected = true;
-  if (!MOCK && !navigator.requestMIDIAccess) { sayK("nomidi"); return; }
+  if (!MOCK && !HOST && !navigator.requestMIDIAccess) { sayK("nomidi"); return; }
   $("connect").disabled = true;
   sayK("connecting");
   try {
     if (!access) {
       if (MOCK) { mock = makeMockDevice({ auto: false, legacy: QS.get("legacy") === "1", onChange: previewChanged }); access = mock.access; }
+      else if (HOST) access = HOST.access;
       else {
         try { access = await navigator.requestMIDIAccess({ sysex: true }); }
         catch (e) { sayK("denied"); return; }
@@ -11533,7 +11542,14 @@ $("connect").addEventListener("click", () => {
 applyLang();
 showTab(tab);
 libInit();
-if (!MOCK && !navigator.requestMIDIAccess) sayK("nomidi");
+if (!MOCK && !HOST && !navigator.requestMIDIAccess) sayK("nomidi");
+if (HOST && HOST.attach) HOST.attach({ connect, disconnect, connected: () => !!dev, wanted: () => wantConnected,
+  beside: (name) => {                                  /* the page shown beside the selected one (null: none) */
+    const was = besideTab;
+    besideTab = TABS.includes(name) ? name : null;
+    renderPanels();
+    if (besideTab === "tracks" && was !== "tracks" && hasTracks() && dev.dump) op(readMixer);
+  } });
 })();
 /* the site without internet (SLOOP 2.6, webapp/sw.js): opened once online, the editor and the installer work
  * offline too, still on https (Android: a downloaded file opens as content://, where Chrome refuses MIDI) */

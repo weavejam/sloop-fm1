@@ -9,3 +9,5 @@ mkdir -p build/host
 CC="${CC:-$(command -v clang || echo cc)}"
 "$CC" -O2 -fwrapv -fno-strict-aliasing -w -Ibuild/gen -Ifirmware/src tests/preview_native.c -o build/host/preview_native
 node tests/preview_test.mjs
+# the tuttidaw plugin (web/plugin/README.md: the firmware with SLOOP_TUTTI), when it is built (web/plugin/build.sh)
+if [ -f build/plugin-wasm/sloop.wasm ]; then node web/plugin/plugin_test.mjs build/plugin-wasm/sloop.wasm; fi

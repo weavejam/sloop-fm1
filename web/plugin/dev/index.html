@@ -1,0 +1,149 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Copyright (C) 2026 weavejam
+     A stand-in tutti-plugin/0 host for development (web/plugin/dev/serve.mjs): the manifest, the sandboxed iframe, the
+     handshake, init, the transport (preview), get-state, renders with credits (played back here), commit. Not tuttidaw:
+     only what the protocol needs. ?plugin=ORIGIN picks the plugin (default http://127.0.0.1:8791). window.host is its API
+     (the browser check drives it). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tutti-plugin/0 dev host</title>
+<link rel="icon" href="data:,">
+<style>
+body { font: 13px/1.5 system-ui, sans-serif; margin: 12px; background: #eee; }
+iframe { width: 100%; height: 820px; border: 1px solid #999; background: #fff; }
+button { margin: 2px; } #log { height: 160px; overflow: auto; background: #111; color: #9f9; font: 11px monospace; padding: 6px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div>
+  <button id="init-edit">init (edit)</button><button id="init-render">init (render, headless)</button>
+  BPM <input id="bpm" value="120" size="6">
+  <button id="play">play</button><button id="stop">stop</button>
+  <button id="get">get-state</button>
+  <button id="rmix">render mix [0, 16)</button><button id="rstems">render stems</button><button id="cancel">cancel</button>
+  <span id="status"></span>
+</div>
+<iframe id="frame" sandbox="allow-scripts allow-same-origin" allow="autoplay" referrerpolicy="no-referrer" loading="eager"></iframe>
+<div id="log"></div>
+<script type="module">
+const PROTOCOL = "tutti-plugin/0";
+const PLUGIN = new URLSearchParams(location.search).get("plugin") || "http://127.0.0.1:8791";
+const origin = new URL(PLUGIN).origin, frame = document.getElementById("frame");
+const logEl = document.getElementById("log");
+const log = (...a) => { logEl.textContent += a.map((x) => typeof x === "string" ? x : JSON.stringify(x)).join(" ") + "\n"; logEl.scrollTop = 1e9; };
+let port = null, sessionId = null, generation = 0, seq = 0, state = null, stateVersion = null, revision = 0, tgen = 0;
+const pending = new Map(), events = [];
+const manifest = await (await fetch(origin + "/tutti-plugin.json")).json();
+log("manifest", manifest.id, manifest.version, manifest.build);
+const bpm = () => +document.getElementById("bpm").value || 120;
+const context = () => ({ timeMap: { tempoPoints: [{ beat: 0, bpm: bpm(), ramp: "step" }], signatures: [{ beat: 0, numerator: 4, denominator: 4 }] },
+                         key: null, projectName: "dev" });
+
+addEventListener("message", (e) => {
+  if (e.source !== frame.contentWindow || e.origin !== origin || !e.data || e.data.type !== "tutti-plugin:hello") return;
+  if (port) port.close();
+  for (const [, p] of pending) p.reject(Object.assign(new Error("session-ended"), { code: "session-ended" }));
+  pending.clear();
+  const ch = new MessageChannel();
+  port = ch.port1;
+  sessionId = crypto.randomUUID();
+  generation++;
+  port.onmessage = (ev) => onMessage(ev.data);
+  frame.contentWindow.postMessage({ type: "tutti-plugin:connect", protocol: PROTOCOL, sessionId, generation,
+                                    host: { name: "dev host", version: "0", timeOrigin: performance.timeOrigin } }, origin, [ch.port2]);
+  log("connect", sessionId, "generation", generation);
+  events.push({ type: "connected" });
+});
+function onMessage(m) {
+  if (!m || m.sessionId !== sessionId) return;
+  events.push(m.type === "render-chunk" ? { type: m.type, output: m.output, frameOffset: m.frameOffset, frames: m.channels[0].length } : m);
+  const p = m.id && pending.get(m.id);
+  if (m.type === "render-chunk" || m.type === "render-progress") { const r = renders.get(m.renderId); if (r) r.on(m); return; }
+  if (m.type !== "render-chunk") log("<-", m.type, m.code || "", m.message || "", m.stateRevision ?? "");
+  if (m.type === "state-changed") { revision = m.stateRevision; getState(); }
+  if (m.type === "commit") { log("commit", m); render(m.outputs || ["mix"], m.fromBeat ?? 0, m.toBeat ?? 16).then(play); }
+  if (p && (m.type.endsWith(":ok") || m.type === "error")) { pending.delete(m.id); m.type === "error" ? p.reject(Object.assign(new Error(m.message), m)) : p.resolve(m); }
+}
+function request(type, payload = {}, transfer = []) {
+  const id = "q" + ++seq;
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+    port.postMessage({ type, sessionId, id, ...payload }, transfer);
+  });
+}
+async function init(mode) {
+  const r = await request("init", { sampleRate: 48000, context: context(), state: state ? state.slice(0) : null, stateVersion: state ? stateVersion : null, mode });
+  revision = r.stateRevision;
+  log("init:ok", r.plugin, "revision", revision);
+  return r;
+}
+async function getState() {
+  const r = await request("get-state");
+  state = r.state; stateVersion = r.stateVersion; revision = r.stateRevision;
+  log("state", r.state.byteLength, "B, revision", revision);
+  return { bytes: r.state.byteLength, revision };
+}
+const renders = new Map();
+async function render(outputs, fromBeat = 0, toBeat = 16, opts = {}) {
+  const renderId = "r" + ++seq, out = {};
+  let progress = 0;
+  renders.set(renderId, { on: (m) => {
+    if (m.type === "render-progress") { progress = m.fraction; document.getElementById("status").textContent = `rendering ${(progress * 100).toFixed(0)} %`; return; }
+    (out[m.output] ||= []).push(m);
+    port.postMessage({ type: "render-credit", sessionId, renderId, chunks: 1 });
+  } });
+  const t0 = performance.now();
+  try {
+    const ok = await request("render", { renderId, stateRevision: revision, context: context(), input: opts.input ?? null, fromBeat, toBeat,
+                                         tailMs: opts.tailMs ?? 1000, outputs, sampleRate: opts.sampleRate ?? 48000 });
+    const res = { ok, ms: performance.now() - t0, outputs: {} };
+    for (const [o, cs] of Object.entries(out)) {
+      const n = cs.reduce((s, c) => s + c.channels[0].length, 0), l = new Float32Array(n), r = new Float32Array(n);
+      let k = 0;
+      for (const c of cs) { l.set(c.channels[0], k); r.set(c.channels[1], k); k += c.channels[0].length; }
+      res.outputs[o] = { frames: n, peak: l.reduce((m, x) => Math.max(m, Math.abs(x)), 0), l, r };
+    }
+    document.getElementById("status").textContent = `rendered in ${res.ms.toFixed(0)} ms`;
+    log("render:ok", Object.fromEntries(Object.entries(res.outputs).map(([o, x]) => [o, `${x.frames} frames, peak ${x.peak.toFixed(3)}`])));
+    lastRender = { renderId, res };
+    return res;
+  } finally { renders.delete(renderId); }
+}
+let lastRender = null, ac = null;
+function play(res) {
+  const m = res.outputs.mix || Object.values(res.outputs)[0];
+  ac = ac || new AudioContext({ sampleRate: 48000 });
+  const b = ac.createBuffer(2, m.frames, 48000);
+  b.copyToChannel(m.l, 0); b.copyToChannel(m.r, 1);
+  const s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start();
+}
+function transport(playing, beat = 0) {
+  tgen++;
+  const t = { type: "transport", sessionId, generation: tgen, playing, beat, atEpochMs: performance.timeOrigin + performance.now() + 100, loop: null };
+  port.postMessage(t);
+  clearInterval(transport.timer);
+  if (playing) {
+    const t0 = t.atEpochMs;
+    transport.timer = setInterval(() => {
+      const now = performance.timeOrigin + performance.now();
+      port.postMessage({ ...t, beat: beat + ((now - t0) / 1000) * bpm() / 60, atEpochMs: now });
+    }, 250);
+  }
+}
+document.getElementById("init-edit").onclick = () => init("edit");
+document.getElementById("init-render").onclick = () => init("render");
+document.getElementById("play").onclick = () => transport(true, 0);
+document.getElementById("stop").onclick = () => transport(false);
+document.getElementById("get").onclick = getState;
+document.getElementById("rmix").onclick = () => render(["mix"]).then(play);
+document.getElementById("rstems").onclick = () => render(["mix", "t1", "t2", "t3", "drums"]).then(play);
+document.getElementById("cancel").onclick = () => { for (const id of renders.keys()) port.postMessage({ type: "cancel", sessionId, renderId: id }); };
+frame.src = new URL(manifest.entry, origin).href;
+window.host = { init, getState, render, transport, request, events, manifest, get revision() { return revision; },
+                summary: (r) => Object.fromEntries(Object.entries(r.outputs).map(([o, x]) => [o, { frames: x.frames, peak: x.peak }])),
+                reload: () => { frame.src = frame.src; } };
+</script>
+</body>
+</html>

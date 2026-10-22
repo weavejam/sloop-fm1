@@ -62,6 +62,9 @@ typedef struct {
 } sl_t;
 static sl_t sl[NTRK];
 static int32_t sl_dbuf[CTL];     /* the drum track's dry mono signal (slicer_drums) */
+#if SLOOP_TUTTI
+static uint32_t tutti_sl_frac[NTRK];   /* hosted: each step clock's fraction of a unit (Q32, as core.h tutti_frac) */
+#endif
 
 static void slicer_start(uint32_t pos)   /* seq_start: step 0 of every track, pos units in */
 {
@@ -70,6 +73,9 @@ static void slicer_start(uint32_t pos)   /* seq_start: step 0 of every track, po
         sl[k].idx = 15;
         sl[k].pos = pos;
         sl[k].len = 0;
+#if SLOOP_TUTTI
+        tutti_sl_frac[k] = tutti_frac;              /* (with the transport clock's) */
+#endif
     }
 }
 
@@ -95,7 +101,11 @@ static void sl_enter(const track_t *t, sl_t *s)
         s->rec_on = 1;
         s->half_n = 0;
     } else if (s->rec >= 2u * SL_RAMP) {            /* a repeat: the last live step, looped */
+#if SLOOP_TUTTI
+        uint32_t l = TEMPO_SAMPLES(s->base);
+#else
         uint32_t l = s->base / (uint32_t)song.g[G_BPM];   /* (in samples) */
+#endif
         while (l > 2u * SL_LEN)
             l >>= 1;                                /* (a long step: a half, a quarter .. of it) */
         s->loop = l < 2u * s->rec ? l : 2u * s->rec;
@@ -159,6 +169,20 @@ static void slicer_track(const track_t *t, int32_t *b, uint32_t n)
         uint32_t m, left;
         while (s->pos >= s->len)
             sl_enter(t, s);
+#if SLOOP_TUTTI
+        if (tutti_bpm_q32) {                        /* hosted: units at the host's tempo, the fraction carried */
+            uint64_t need = ((uint64_t)(s->len - s->pos) << 32) - tutti_sl_frac[k], u;
+            left = (uint32_t)((need + tutti_bpm_q32 - 1u) / tutti_bpm_q32);
+            m = left < n - i ? left : n - i;
+            if (act)
+                sl_seg(t, s, sl_buf[k], b + i, m, left);
+            u = (uint64_t)m * tutti_bpm_q32 + tutti_sl_frac[k];
+            tutti_sl_frac[k] = (uint32_t)u;
+            s->pos += (uint32_t)(u >> 32);
+            i += m;
+            continue;
+        }
+#endif
         left = (s->len - s->pos + bpm - 1u) / bpm;  /* samples to the boundary */
         m = left < n - i ? left : n - i;
         if (act)

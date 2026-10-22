@@ -42,7 +42,12 @@ static const uint16_t LSYNC_PULSES[11] = {0, 384, 192, 96, 48, 24, 12, 8, 6, 4, 
 static __attribute__((noinline)) uint32_t lfo_sync_inc(const int16_t *p)   /* (not inlined: its divides stay out of
                                                                            * the audio ISR's loop over the tracks) */
 {
+#if SLOOP_TUTTI
+    uint32_t beat = tutti_bpm_q32 ? tutti_u2s(BEAT_U) : (uint32_t)FS * 60u / (uint32_t)clamp(song.g[G_BPM], 20, 300),
+             cyc, q, r;
+#else
     uint32_t beat = (uint32_t)FS * 60u / (uint32_t)clamp(song.g[G_BPM], 20, 300), cyc, q, r;
+#endif
     cyc = beat * LSYNC_PULSES[(uint32_t)p[P_LSYNC] % NELEM(LSYNC_PULSES)] / 24u;   /* (p: fx.c units_split asks too) */
     cyc = cyc ? cyc : 1u;
     q = 0xFFFFFFFFu / cyc;
@@ -653,7 +658,11 @@ static __attribute__((noinline)) void esync_coef(const track_t *t)   /* (not inl
     const int16_t *p = t->p;
     uint32_t *ek = esync_k[(uint32_t)(t - trk) % NTRK];
     if (p[P_ESYNC]) {
+#if SLOOP_TUTTI
+        uint32_t q = tutti_bpm_q32 ? tutti_u2s(BEAT_U) : (uint32_t)FS * 60u / (uint32_t)clamp(song.g[G_BPM], 20, 300);
+#else
         uint32_t q = (uint32_t)FS * 60u / (uint32_t)clamp(song.g[G_BPM], 20, 300);   /* a beat (a quarter), samples */
+#endif
         ek[0] = esync_one(q, p[P_ATK], 0);
         ek[1] = esync_one(q, p[P_DEC], 1);
         ek[2] = esync_one(q, p[P_REL], 2);

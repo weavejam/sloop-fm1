@@ -14,6 +14,12 @@
 enum { V_POLY, V_MONO, V_LEGATO, V_UNISON };   /* P_VOICE */
 #define NSTEP 64
 #define HALF_FRAMES 256          /* I2S half buffer: 5.8 ms at 44.1 kHz */
+#ifndef SLOOP_TUTTI
+#define SLOOP_TUTTI 0            /* hosted (web/plugin: the tuttidaw plugin): the host's tempo, fractional, drives the
+                                  * transport clock (tutti_bpm_q32), each render unit's dry mix and sends and the
+                                  * limiter's gain go out for the stems (fx.c tutti_acc, tutti_lim); 0 = none of it,
+                                  * the firmware as always */
+#endif
 #ifndef FELUCCA_SLICE
 #define FELUCCA_SLICE 0          /* the SLICE engine (eng_slice.c): kept in the tree, not built by default */
 #endif
@@ -365,10 +371,29 @@ static uint32_t dly_units(uint32_t d)
     return d < NDIV_SHORT ? BEAT_U / DIV_DEN[d] : d == NDIV_SHORT ? BEAT_U * 3u / 4u : d == NDIV_SHORT + 1u ? BEAT_U * 3u / 8u
                                                                                          : BEAT_U * 3u / 2u;   /* 1/4D (2.6) */
 }
+#if SLOOP_TUTTI
+/* hosted: the host's tempo (web/plugin tutti_tempo), BPM in Q32; 0 = G_BPM as always. A runtime value only: G_BPM
+ * (the song's own, in its projects) stays as it was. The clock advances by n x BPM units a block as always, the
+ * fraction of a unit carried to the next block (tutti_frac): after any number of samples the clock is within a
+ * unit (1 / BPM of a sample) of the exact position, and every step, section and bar with it */
+static uint64_t tutti_bpm_q32;
+static uint32_t tutti_frac, tutti_adv;               /* the clock's fraction (Q32); the last block's advance */
+static uint32_t tutti_units(uint32_t n)              /* n samples in units at the host's tempo (seq.c events_block) */
+{
+    uint64_t u = (uint64_t)n * tutti_bpm_q32 + tutti_frac;
+    tutti_frac = (uint32_t)u;
+    return tutti_adv = (uint32_t)(u >> 32);
+}
+static uint32_t tutti_u2s(uint32_t u) { return (uint32_t)(((uint64_t)u << 32) / tutti_bpm_q32); }   /* units -> samples */
+#define TEMPO_SAMPLES(u) (tutti_bpm_q32 ? tutti_u2s(u) : (u) / (uint32_t)song.g[G_BPM])
+static uint32_t div_samples(uint32_t div) { return TEMPO_SAMPLES(div_units(div)); }
+static uint32_t dly_samples(uint32_t d) { return TEMPO_SAMPLES(dly_units(d)); }
+#else
 /* length of one step (N_SDIV order) in samples at the song tempo (rounded down) */
 static uint32_t div_samples(uint32_t div) { return div_units(div) / (uint32_t)song.g[G_BPM]; }
 /* length of the delay's TIME (N_DLY order) in samples at the song tempo (rounded down) */
 static uint32_t dly_samples(uint32_t d) { return dly_units(d) / (uint32_t)song.g[G_BPM]; }
+#endif
 /* SLOOP 2.6, after Felucca 1.5.1: REV THROW / ECHO THROW (FX held + OCT- / OCT+, ui_input.c): while held, every
  * track's send to the reverb / the delay goes full, gliding in and out (~12 ms); ECHO THROW also takes the delay's FDBK
  * up to 70 % if it is lower. The song's values never change, nothing is saved or recorded. thr_req: bit 0 the reverb,

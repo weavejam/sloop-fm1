@@ -76,7 +76,7 @@ if (typeof registerProcessor === 'function') {
       this.port.onmessage = ({ data }) => {
         try {
           if (data.type === 'state') this.dsp.sync(data.state);
-          else if (data.type === 'note') this.dsp.w.preview_note(data.track, data.note, data.on ? 1 : 0);
+          else if (data.type === 'note') this.dsp.w.preview_note(data.track, data.note, data.on ? 1 : 0, data.velocity | 0);
           else if (data.type === 'play') this.dsp.w.preview_play(data.on ? 1 : 0);
           else if (data.type === 'panic') this.dsp.w.preview_panic();
           else if (data.type === 'hit') this.dsp.w.preview_hit(data.kit, data.lane, data.velocity);

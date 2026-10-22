@@ -58,7 +58,7 @@ export class LocalPreview {
     if (this.node) this.node.port.postMessage({ type: 'state', state: this.getState(includeSamples) });
   }
   play(on) { this.node?.port.postMessage({ type: 'play', on }); }
-  note(track, note, on) { this.node?.port.postMessage({ type: 'note', track, note, on }); }
+  note(track, note, on, velocity = 0) { this.node?.port.postMessage({ type: 'note', track, note, on, velocity }); }
   hit(kit, lane, velocity) { this.node?.port.postMessage({ type: 'hit', kit, lane, velocity }); }
   panic() { this.node?.port.postMessage({ type: 'panic' }); }
   setVolume(value) {

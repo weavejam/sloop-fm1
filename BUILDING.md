@@ -62,6 +62,22 @@ Build options (environment, `0` or `1`; defaults in `firmware/src/felucca.c`):
 | `FELUCCA_UAC` | 1 | USB audio input: the master output, 44.1 kHz stereo (after Felucca 1.0) |
 | `FELUCCA_UART` | 1 | TRS MIDI IN (the 3.5 mm jack) |
 
+## SLOOP plugin for tuttidaw
+
+```
+python3 tools/build.py --gen-only   # only build/gen (the generated headers): no JieLi toolchain or SDK
+web/plugin/build.sh                 # -> build/plugin-site-preview/, a static site (PLUGIN_CHANNEL=production:
+                                    #    build/plugin-site/; a clean tree, see web/plugin/README.md); needs emcc, node
+node web/plugin/dev/serve.mjs       # the preview site and a stand-in host, http://localhost:8792/
+```
+
+`web/plugin/` builds the whole firmware for the browser with `SLOOP_TUTTI` (the host's fractional tempo, each render
+unit's sums for its stem) and runs the web editor on it as the [tuttidaw](https://tuttidaw.com) plugin (protocol
+`tutti-plugin/0`), with a headless renderer. Details: [web/plugin/README.md](web/plugin/README.md).
+`tests/run_preview_tests.sh` runs its tests when it is built; `.github/workflows/plugin-site.yml` builds both channels'
+sites with Emscripten 6.0.11, runs the tests and keeps the production site (a push to main) or the preview one (a pull
+request) as an artifact. weavejam's plugin build; not affiliated with or endorsed by M-VAVE or Hügelton Instruments.
+
 ## Samples
 
 The CC0 instrument samples that the SAMPLE engine uses are in `assets/samples-cc0/`

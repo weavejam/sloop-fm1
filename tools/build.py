@@ -4,6 +4,8 @@
 """Build Felucca: the app, the update loader and an installable .fwsc package.
 
   tools/build.py [--release X.Y[-suffix]]
+  tools/build.py --gen-only      only the generated headers (build/gen): no toolchain or SDK needed (the browser
+                                 builds: tools/build_preview.py, web/plugin/build.sh)
 
 Outputs in build/: felucca.bin (app), loader/ota.bin (update loader),
 felucca.fwsc (package). See BUILDING.md for the toolchain and the SDK.
@@ -316,7 +318,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--release", metavar="X.Y", help="release build: identity FM-1_9XY, version string X.Y")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
+    ap.add_argument("--gen-only", action="store_true", help="only the generated headers (build/gen), no toolchain")
     a = ap.parse_args()
+    if a.gen_only:
+        generate()
+        return
     name = "felucca.fwsc"
     if a.release:                   # one digit each: the identity has room for two
         m = re.fullmatch(r"(\d)\.(\d)(-[A-Za-z0-9]+)?", a.release)
