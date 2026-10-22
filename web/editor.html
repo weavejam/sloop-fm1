@@ -5344,6 +5344,9 @@ window.addEventListener("hashchange", () => { const h = location.hash.slice(1); 
 
 const QS = new URLSearchParams(location.search);
 const MOCK = QS.get("mock") === "1";
+/* a page that runs a SLOOP of its own (web/plugin: the tuttidaw plugin) sets window.sloopHost before this script: its
+   MIDI access (one port pair, that SLOOP) instead of Web MIDI, and attach() is told how to connect */
+const HOST = !MOCK && window.sloopHost && window.sloopHost.access ? window.sloopHost : null;
 $("mock").hidden = !MOCK;
 let mock = null;
 
@@ -5946,12 +5949,13 @@ const drumGrid = () => isDrum() && !!dev.info.proto && dev.info.proto >= 5;
 /* -------------------------------------------------------------- MIDI --- */
 async function connect() {
   wantConnected = true;
-  if (!MOCK && !navigator.requestMIDIAccess) { sayK("nomidi"); return; }
+  if (!MOCK && !HOST && !navigator.requestMIDIAccess) { sayK("nomidi"); return; }
   $("connect").disabled = true;
   sayK("connecting");
   try {
     if (!access) {
       if (MOCK) { mock = makeMockDevice({ auto: false, legacy: QS.get("legacy") === "1", onChange: previewChanged }); access = mock.access; }
+      else if (HOST) access = HOST.access;
       else {
         try { access = await navigator.requestMIDIAccess({ sysex: true }); }
         catch (e) { sayK("denied"); return; }
@@ -11533,7 +11537,8 @@ $("connect").addEventListener("click", () => {
 applyLang();
 showTab(tab);
 libInit();
-if (!MOCK && !navigator.requestMIDIAccess) sayK("nomidi");
+if (!MOCK && !HOST && !navigator.requestMIDIAccess) sayK("nomidi");
+if (HOST && HOST.attach) HOST.attach({ connect, disconnect, connected: () => !!dev, wanted: () => wantConnected });
 })();
 /* the site without internet (SLOOP 2.6, webapp/sw.js): opened once online, the editor and the installer work
  * offline too, still on https (Android: a downloaded file opens as content://, where Chrome refuses MIDI) */
