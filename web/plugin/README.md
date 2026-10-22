@@ -67,10 +67,29 @@ another inline script or an inline handler).
 The plugin's page is **SLOOP's own web editor** (`web/editor.html`: sound, sequencer, tracks, song, library, samples,
 drum kit, drum synth, song & sections, settings, theme, LIVE), not a new UI. It talks the editor protocol
 (`web/EDITOR_PROTOCOL.md`, SysEx) to a port named "SLOOP (this page)": `tutti-host.js` gives it a Web MIDI access with
-that one port pair (`window.sloopHost`; three small hooks in `editor.html` use it when it is there, nothing changes
+that one port pair (`window.sloopHost`; four small hooks in `editor.html` use it when it is there, nothing changes
 without it), and behind the port runs the firmware's own `editor.c` in the page's SLOOP. So everything the editor
 does with an FM-1 it does here, with the firmware's answers. The bar at the top adds: what a render plays, **render to
 tuttidaw** (`commit`, the mix or with the stems), the volume (MASTER), credits and the source.
+
+**Any frame size** (`tutti.js layout`). tuttidaw opens the plugin's window wide on a desktop (about
+min(1280, viewport) x the viewport's height) and lets the user drag it to any size from 480 x 360; on a phone it is a
+tall sheet. The page fills the frame and never scrolls as a whole: the editor is scaled to the frame with CSS `zoom`
+(layout units: crisp, and the hit targets are where they are drawn), and each of its columns scrolls on its own,
+without scrollbars.
+
+- **Wide** (aspect >= 1.3 and >= 900 px wide): the side bar, the selected page, and **beside it a second page of the
+  editor's**: the step sequencer by default (the pattern of the selected track next to its sound), or the mixer
+  (TRACKS: the four tracks' levels, pans, mutes) or the song order, chosen in the bar ("beside"; kept in this
+  browser). The layout's natural size is 1440 x 820, scaled to fit (0.6 .. 1.5). The editor's `beside` hook
+  (`HOST.attach`) shows that page's panel too; `tutti.js` places it in the second column.
+- **Otherwise** the editor as it is (its desktop layout, or under 860 px its phone layout with the side bar on top),
+  scaled down to fit a small frame (not under 0.7); a frame under ~640 px high (at that zoom) keeps only the pages' row
+  of the top bar.
+- `resize` is sent once connected with the wide layout's size (1440 x 820), as the size this page prefers; the page
+  fits whatever size the host gives it. The same layout runs when the page is opened by itself.
+- Screenshots (`screenshots/`, Chromium, the page by itself): 1280 x 820, 1600 x 900 (wide; the mixer beside at
+  1280 x 820 too), 900 x 700, 480 x 360, 390 x 780.
 
 - In tuttidaw's frame: the handshake (accepted from the build's channel's embedders, from the parent window only),
   then `init`. Edit mode: SLOOP starts with the state (on its own where the browser lets the frame play sound, else
