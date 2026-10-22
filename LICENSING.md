@@ -19,6 +19,7 @@ GPL-3.0-only as a whole):
 - the firmware: `firmware/` (app, HAL, update loader)
 - the build script and tools: `build.sh`, `tools/`
 - the web pages (installer, editor) and their tests: `web/` (not the Fukiai font, below)
+- the SLOOP plugin for tuttidaw: `web/plugin/` (below)
 - the host tests: `tests/`
 
 You may use, study, change and share it under the GPL. If you distribute Felucca, or
@@ -52,6 +53,22 @@ assets, is entirely governed by the GPL.
 | msfa by Google Inc. and Pascal Gauthier, from Dexed (<https://github.com/asb2m10/dexed>): the FM6 engine's synthesis (SLOOP 2.4), ported to integer C for Felucca 1.0 by Leo Kuroshita (Dexed itself is GPL-3.0; only msfa is used; the FM6 factory patches are Felucca's own) | Apache-2.0 | `firmware/src/fm6_core.c`, `LICENSES/Apache-2.0-msfa.txt` |
 | DaisySP (Electrosmith, Emilie Gillet) and Rings' sympathetic strings (Emilie Gillet): the PHYS engine's models (SLOOP 2.5, from Felucca 1.0, ported to fixed point by Leo Kuroshita) | MIT | `firmware/src/phys_dsp.c`, `firmware/src/phys_symp.c` (the notice is in each file) |
 | JieLi AC79 SDK: `uboot.boot`, `cfg_tool.bin`, `eq_cfg_hw.bin` are read from your SDK checkout at build time and placed in the package; no SDK files are in this tree | Apache-2.0 | <https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK> |
+
+## The SLOOP plugin for tuttidaw (weavejam)
+
+`web/plugin/` (the whole firmware as a device in the browser, the headless renderer, the stems, the fractional tempo,
+the editor on that device, the plugin protocol, the site's build) and the `SLOOP_TUTTI` parts of the firmware it needs
+are by weavejam, in the fork <https://github.com/weavejam/sloop-fm1>, under GPL-3.0-only like the rest of SLOOP:
+
+Copyright (C) 2026 weavejam
+
+It is weavejam's plugin build of SLOOP by isod89 (<https://github.com/isod89/sloop-fm1>): all of its sound, its
+sequencer and its editor are SLOOP's, and everything above and below applies to it. It is built without the Felucca
+Assets that are not under the GPL (the icon atlas: `FELUCCA_ICONS=0`, the plugin has no screen; SLOOP has no Hügelton
+Sample Pack). Its site (`web/plugin/build.sh`) serves the licence texts, this file and the samples' attribution with it
+(`/licenses/`), names its source (the commit it was built from) on `/credits.html`, and says that it is not affiliated
+with or endorsed by M-VAVE or Hügelton Instruments. tuttidaw only talks to it at arm's length (a sandboxed frame of
+another site, messages): tuttidaw is not part of it and does not become GPL by hosting it.
 
 ## Contributions
 

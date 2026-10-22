@@ -547,6 +547,13 @@ See [BUILDING.md](BUILDING.md). In short: the JieLi toolchain and three files of
 - Samples: Versilian Studios VSCO-2 CE and VCSL, Sonic Pi (all CC0). Font: Terminus and Terminus Bold (SIL OFL 1.1). Icons: Fukiai (MIT, Hügelton Instruments). PHASE engine after CrispyZebra (GPL); VOICE after klattsch (MIT); FM6: msfa from Dexed by Google Inc. and Pascal Gauthier (Apache-2.0).
 - Interface ideas after teenage engineering's pocket operators and EP-133, Elektron's step entry and Akai's MPC (swing, note repeat, erase).
 
+## SLOOP in tuttidaw (plugin)
+
+This fork (weavejam/sloop-fm1) also builds SLOOP as a plugin for the [tuttidaw](https://tuttidaw.com) DAW: the whole
+firmware runs in the browser with its web editor, and renders its song, a section or MIDI from tuttidaw into tuttidaw
+at tuttidaw's tempo, mix and stems ([web/plugin/README.md](web/plugin/README.md)). It is weavejam's plugin build of
+SLOOP by isod89, GPL-3.0-only, not affiliated with or endorsed by M-VAVE or Hügelton Instruments.
+
 ## Licence
 
 Code: GPL-3.0-only (see [LICENSE](LICENSE), and [LICENSING.md](LICENSING.md) for the assets). No warranty. M-VAVE and FM-1 are trademarks of their owners; SLOOP is not affiliated with M-VAVE, teenage engineering, Elektron or Akai. Drum kit names describe styles, not products.

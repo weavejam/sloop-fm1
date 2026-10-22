@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 weavejam
+# The SLOOP plugin for tuttidaw (web/plugin/README.md): the generated headers (no JieLi toolchain), the browser preview
+# and its tests (tests/run_preview_tests.sh), the plugin built with Emscripten (pinned: 6.0.11), its tests, and its
+# static site for both deployment channels (web/plugin/site.mjs PLUGIN_CHANNEL): production (embeddable by
+# https://tuttidaw.com and https://www.tuttidaw.com only) kept as an artifact on a push to main, preview (also
+# http://localhost:<port>) on a pull request. After weavejam/Felucca's plugin-site.yml.
+# Third-party actions are pinned to commits (the tag in the comment).
+name: plugin-site
+
+on:
+  push:
+    branches: [main]
+    paths: ["firmware/**", "web/**", "tools/**", "assets/**", "tests/**", "LICENSE*", "LICENSES/**", "LICENSING.md",
+            ".gitignore", ".github/workflows/plugin-site.yml"]
+  pull_request:
+    paths: ["firmware/**", "web/**", "tools/**", "assets/**", "tests/**", "LICENSE*", "LICENSES/**", "LICENSING.md",
+            ".gitignore", ".github/workflows/plugin-site.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-site-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}   # (every build of main runs to its end)
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065   # v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4
+        with:
+          node-version: "24"
+
+      - uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021   # v14
+        with:
+          version: "6.0.11"
+          actions-cache-folder: emsdk-cache   # (in .gitignore: the site needs a clean tree)
+
+      - name: Generated headers (fonts, icons, tables, samples, kits, FM6 patches, logo)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libfribidi0   # Pillow's Raqm loads it (OpenType features)
+          python3 -m pip install -q Pillow
+          python3 tools/build.py --gen-only
+
+      - name: Browser preview (tools/build_preview.py)
+        run: python3 tools/build_preview.py
+
+      # both channels from one wasm; site.mjs fails on a tree with changes not in the commit (the source link)
+      - name: SLOOP plugin (web/plugin) and its sites
+        run: |
+          git status --porcelain
+          PLUGIN_CHANNEL="production preview" sh web/plugin/build.sh
+
+      - name: Tests (the preview against the native build, the plugin)
+        run: CC=clang sh tests/run_preview_tests.sh
+
+      - name: Keep the production site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4
+        with:
+          name: sloop-plugin-site
+          path: build/plugin-site
+          include-hidden-files: true
+          if-no-files-found: error
+
+      - name: Keep the preview site
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4
+        with:
+          name: sloop-plugin-site-preview
+          path: build/plugin-site-preview
+          include-hidden-files: true
+          if-no-files-found: error
+
+      # Deployment (by the lead for now: https://sloop.plugins.tooljams.com, https://sloop-preview.plugins.tooljams.com),
+      # only from a push to main (the production site). To deploy from here: a Pages project, the secrets
+      # CLOUDFLARE_API_TOKEN (Pages: Edit) and CLOUDFLARE_ACCOUNT_ID, then uncomment:
+      # - name: Deploy to Cloudflare Pages
+      #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      #   uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd   # v3
+      #   with:
+      #     apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      #     accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      #     command: pages deploy build/plugin-site --project-name=sloop-tutti-plugin --branch=main
