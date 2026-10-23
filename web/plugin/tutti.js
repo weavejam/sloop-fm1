@@ -10,6 +10,7 @@
 //   - opened by itself (or not connected within a few seconds): the editor on this page's SLOOP, its state kept in
 //     this browser, a note that it is a tuttidaw plugin.
 import { PluginSession, embedderAllowed } from "./protocol.js";
+import { PanelBridge } from "./fm1-panel.js";
 import { SloopEngine, PreviewTempo } from "./engine.js";
 import { RenderError, PLAY_MODE } from "./renderer.js";
 import { packState, unpackState, STATE_VERSION, DEFAULT_META, PLAYS, cleanMeta } from "./state.js";
@@ -183,6 +184,7 @@ function ask(type, extra = {}) {
 
 function onNode(e) {
   const m = e.data;
+  panel.frame(m);                                    // (the screen and LEDs for a hardware FM-1: fm1-panel.js)
   if (m.type === "sysex") host.receive(m.data);
   else if (m.type === "ready") {
     ready = status.ready = true;
@@ -212,6 +214,7 @@ async function ensureAudio() {
   await ac.audioWorklet.addModule(new URL("./worklet-tutti.js", import.meta.url));
   node = new AudioWorkletNode(ac, "sloop-tutti", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
   node.port.onmessage = onNode;
+  panel.node(node);                                  // (a hardware FM-1 through tuttidaw plays this device too)
   node.onprocessorerror = () => note("SLOOP's audio stopped (reload the page).");
   node.connect(ac.destination);
   if (!wasmBytes) {
@@ -378,8 +381,14 @@ const engine = new SloopEngine({
   live,
   onChanged: (rev) => session.stateChanged(rev),
 });
+// a hardware FM-1 the host hands this panel while its window has the focus (protocol 12): SLOOP's screen is drawn only
+// while it shows
+const panel = new PanelBridge((m, transfer) => session.send(m, transfer), {
+  onAttach: (on) => { if (node) node.port.postMessage({ type: "panel", on }); },
+});
 const session = new PluginSession({
   engine,
+  panel,
   post: (m) => window.parent.postMessage(m, "*"),
   allow: (origin) => embedderAllowed(origin, EMBEDDERS),   // (the build's channel: site.mjs PLUGIN_CHANNEL)
   plugin: { id: BUILD.id, version: BUILD.version, build: BUILD.build },

@@ -11,3 +11,5 @@ CC="${CC:-$(command -v clang || echo cc)}"
 node tests/preview_test.mjs
 # the tuttidaw plugin (web/plugin/README.md: the firmware with SLOOP_TUTTI), when it is built (web/plugin/build.sh)
 if [ -f build/plugin-wasm/sloop.wasm ]; then node web/plugin/plugin_test.mjs build/plugin-wasm/sloop.wasm; fi
+# a hardware FM-1 through tuttidaw (web/plugin/fm1-panel.js, protocol 12)
+node web/plugin/fm1_panel_test.mjs
