@@ -1058,5 +1058,43 @@ const collect = (h, renderId) => {                    // the chunks of a render,
   h.close();
 }
 
+// a hardware FM-1 through tuttidaw (protocol 12, fm1-panel.js): the screen drawn only while shown, the LEDs through the
+// FM-1's matrix, the panel's presses and keys play the device
+{
+  const d = await Dev.make();
+  const ex = d.ex;
+  d.run(300);
+  const quiet = ex.dev_screen_draws();
+  d.run(200);
+  check("hardware panel: nothing drawn while the screen is not shown", ex.dev_screen_draws() === quiet);
+  ex.dev_panel(1);
+  d.run(200);
+  const fb = new Uint16Array(ex.memory.buffer, ex.dev_screen(), 240 * 240);
+  check("hardware panel: shown, the screen is drawn", ex.dev_screen_draws() > quiet && fb.some((c) => c !== 0));
+  const leds = () => Array.from(new Uint32Array(ex.memory.buffer, ex.dev_leds(), 8));
+  const lit0 = leds()[0] & 0x3fff;
+  check("hardware panel: the LEDs read through the FM-1's matrix (a page button lit)", lit0 !== 0);
+  ex.dev_buttons(1 << 5);                              // GLO by its label (panel.c B_GLO)
+  d.run(80);
+  ex.dev_buttons(0);
+  d.run(120);
+  check("hardware panel: a press by label changes the page (its button lit)", ((leds()[0] >>> 5) & 1) === 1);
+  const level = () => {
+    let e = 0;
+    for (let k = 0; k < 100 * 44.1; k += 128) {
+      ex.dev_render(128);
+      const l = new Float32Array(ex.memory.buffer, ex.dev_out_l(), 128);
+      for (const v of l) e += v * v;
+    }
+    return e;
+  };
+  const silent = level();
+  ex.dev_keys(1 << 12);
+  const held = level();
+  ex.dev_keys(0);
+  check("hardware panel: a key from the hardware sounds", held > silent * 10 + 1e-6);
+  ex.dev_panel(0);
+}
+
 console.log(fails ? `plugin: ${fails} FAILED` : "plugin: all ok");
 process.exit(fails ? 1 : 0);

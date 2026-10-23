@@ -25,6 +25,8 @@ import { storeSectors, restoreSectors } from "./state.js";
 const DRIFT = 0.02;                                    // s
 const SEEK_BLOCKS = 1024;                              // a seek's blocks per render quantum
 const SIG_QUANTA = 64;                                 // how often the state's signature is looked at (~190 ms)
+const PANEL_HOLD_MS = 20;                              // a press of the hardware's (protocol 12) stays in this long
+const PANEL_QUANTA = 11;                               // the screen / LEDs for the hardware: every ~32 ms at 44.1 kHz
 
 class SloopTutti extends AudioWorkletProcessor {
   constructor() {
@@ -41,6 +43,14 @@ class SloopTutti extends AudioWorkletProcessor {
     this.sentSig = null;
     this.quanta = 0;
     this.playing = 0;
+    // a hardware FM-1 through tuttidaw (protocol 12, fm1-panel.js): the panel's presses held at least PANEL_HOLD_MS of
+    // the device's time each (its main loop reads them every 15 ms: a tap is never lost), the screen and LEDs out
+    this.panelOn = false;
+    this.inq = [];
+    this.nextOk = 0;
+    this.pq = 0;
+    this.sentDraws = -1;
+    this.sentLeds = "";
     this.port.onmessage = (e) => this.onMessage(e.data);
   }
 
@@ -52,12 +62,25 @@ class SloopTutti extends AudioWorkletProcessor {
         if (this.ex) this.ex.tutti_tempo(m.bpm);       // (out of SLOOP's range: refused, the tempo stays)
         return;
       }
-      if (m.type === "master") { this.master = m.k10; if (this.ex) this.ex.dev_master(m.k10); return; }
+      if (m.type === "master") {                       // (the page's volume: k10; the FM-1's pot: value)
+        this.master = m.k10 ?? m.value;
+        if (this.ex) this.ex.dev_master(this.master);
+        return;
+      }
+      if (m.type === "panel") {
+        this.panelOn = !!m.on;
+        this.sentDraws = -1;
+        this.sentLeds = "";
+        if (this.ex) this.ex.dev_panel(this.panelOn ? 1 : 0);
+        return;
+      }
       if (m.type === "mode") { this.mode = m.mode >>> 0; if (this.ex) this.setMode(); return; }
       const ex = this.ex;
       if (!ex) return;
       if (m.type === "sysex") { this.sx.push(m.data); this.pump(); return; }
       if (m.type === "midi") { const d = m.data; ex.dev_midi(d[0], d[1] ?? 0, d[2] ?? 0); return; }
+      if (m.type === "buttons" || m.type === "keys") { this.inq.push(m); return; }
+      if (m.type === "enc") { ex.dev_turn(m.role >>> 0, m.n | 0); return; }
       if (m.type === "tutti-play") return this.schedule(m);
       if (m.type === "tutti-snapshot") {
         const ok = ex.tutti_snapshot();
@@ -84,6 +107,10 @@ class SloopTutti extends AudioWorkletProcessor {
     if (this.bpm) ex.tutti_tempo(this.bpm);
     if (m.mode != null) this.mode = m.mode >>> 0;
     ex.tutti_live_mode(this.mode);
+    ex.dev_panel(this.panelOn ? 1 : 0);                // (a new device: the hardware's screen as it was)
+    this.inq = [];
+    this.sentDraws = -1;
+    this.sentLeds = "";
     this.ex = ex;
     this.L = new Float32Array(ex.memory.buffer, ex.dev_out_l(), 128);
     this.R = new Float32Array(ex.memory.buffer, ex.dev_out_r(), 128);
@@ -112,6 +139,33 @@ class SloopTutti extends AudioWorkletProcessor {
     const data = new Uint8Array(ex.memory.buffer, ex.dev_sysex_out(), n).slice();
     ex.dev_sysex_clear();
     this.port.postMessage({ type: "sysex", data }, [data.buffer]);
+  }
+
+  // the panel's presses in, one change per PANEL_HOLD_MS; the screen and LEDs out ~30 times a second while shown
+  panel() {
+    const ex = this.ex, now = ex.dev_now_ms();
+    while (this.inq.length && now - this.nextOk >= 0) {
+      const m = this.inq.shift();
+      if (m.type === "buttons") ex.dev_buttons(m.mask >>> 0);
+      else ex.dev_keys(m.mask >>> 0);
+      this.nextOk = now + PANEL_HOLD_MS;
+    }
+    if (!this.panelOn || ++this.pq < PANEL_QUANTA) return;
+    this.pq = 0;
+    const msg = { type: "frame" }, transfer = [];
+    const draws = ex.dev_screen_draws();
+    if (draws !== this.sentDraws) {
+      this.sentDraws = draws;
+      msg.fb = new Uint16Array(ex.memory.buffer, ex.dev_screen(), 240 * 240).slice();
+      transfer.push(msg.fb.buffer);
+    }
+    const leds = Array.from(new Uint32Array(ex.memory.buffer, ex.dev_leds(), 8));
+    const key = leds.join(",");
+    if (key !== this.sentLeds) {
+      this.sentLeds = key;
+      msg.leds = leds;
+    }
+    if (msg.fb || msg.leds) this.port.postMessage(msg, transfer);
   }
 
   // what PLAY plays changed: playing, the same run starts again where it is now (the next quantum), with it
@@ -166,6 +220,7 @@ class SloopTutti extends AudioWorkletProcessor {
     out[0].set(this.L.subarray(0, n));
     if (out[1]) out[1].set(this.R.subarray(0, n));
     this.out();
+    this.panel();
     if (++this.quanta >= SIG_QUANTA) {
       this.quanta = 0;
       const sig = ex.tutti_sig() >>> 0, playing = ex.dev_playing();

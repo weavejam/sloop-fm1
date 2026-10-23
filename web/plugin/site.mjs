@@ -60,7 +60,7 @@ const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">"
 
 // ---- the plugin: the editor's page, its SLOOP, the protocol
 copy(wasmPath, "plugin/sloop.wasm");
-for (const f of ["tutti-host.js", "tutti.js", "protocol.js", "engine.js", "renderer.js", "resample.js", "state.js",
+for (const f of ["tutti-host.js", "tutti.js", "protocol.js", "fm1-panel.js", "engine.js", "renderer.js", "resample.js", "state.js",
                  "render-worker.js", "worklet-tutti.js"])
   copy(src("web/plugin", f), `plugin/${f}`);
 copy(src("web/fukiai.ttf"), "plugin/fukiai.ttf");
@@ -197,6 +197,7 @@ const manifest = {
     tempoMap: "constant",
     sampleRates: SAMPLE_RATES,
     seek: false,                                       // every render plays from beat 0 (renderer.js)
+    fm1Panel: true,                                    // a hardware FM-1 can play it (protocol 12, fm1-panel.js)
     midiChannels: [{ channel: 0, name: "Track 1" }, { channel: 1, name: "Track 2" }, { channel: 2, name: "Track 3" },
                    { channel: 3, name: "Drums (GM notes)" }],
   },

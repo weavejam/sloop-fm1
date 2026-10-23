@@ -97,8 +97,16 @@ void isr_alnk0(void) {}
 /* ------------------------------------------------- the panel, the screen --- */
 static int32_t dev_enc[7];
 static int32_t fm1_enc_take(uint32_t e) { int32_t s = dev_enc[e % 7u]; dev_enc[e % 7u] = 0; return s; }
-#define FM1_NCOL 16u
-static const int8_t FM1_KEYMAP[5][16];
+#define FM1_NCOL 11u
+static const int8_t FM1_KEYMAP[6][FM1_NCOL] = {      /* as hal/fm1_input.h: key id at (column, row bit); the LEDs a
+                                                      * hardware FM-1 shows through tuttidaw (protocol 12) */
+    {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+    { 5, 11,  4, 10,  3,  9,  2,  8, -1, -1, -1},
+    {34, 35, 36, 37, 38, 40, 39, 13,  7,  6, 12},
+    {23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33},
+    { 0,  1, 15, 14, 17, 16, 19, 18, 20, 21, 22},
+    {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+};
 static uint8_t fm1_led[16], fm1_led_dim[16], fm1_led_bg[16];
 static volatile uint16_t fm1_led_bg_ns;
 static void fm1_led_key(uint32_t id, int on) { (void)id; (void)on; }
@@ -107,8 +115,9 @@ static uint32_t fm1_input_note_edges(void) { return 0; }
 static void fm1_input_init(void) {}
 static int32_t fm1_adc_read(int c) { (void)c; return -1; }
 static void fm1_adc_init(void) {}
-static uint16_t dev_fb[240 * 240];      /* the screen (RGB565 as the panel gets it): never drawn (no main loop's
-                                         * ui_draw here: the page is the editor) */
+static uint16_t dev_fb[240 * 240];      /* the screen (RGB565 as the panel gets it): drawn only while a hardware
+                                         * FM-1 shows it (dev_panel; otherwise the page is the editor) */
+static uint32_t dev_draws;
 static void lcd_fill(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t c)
 {
     uint32_t i, j;
@@ -116,6 +125,7 @@ static void lcd_fill(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t c)
     for (j = 0; j < h && y + j < 240u; j++)
         for (i = 0; i < w && x + i < 240u; i++)
             dev_fb[(y + j) * 240u + x + i] = sw;
+    dev_draws++;
 }
 static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint16_t *p)
 {
@@ -123,6 +133,7 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
     for (j = 0; j < h && y + j < 240u; j++)
         for (i = 0; i < w && x + i < 240u; i++)
             dev_fb[(y + j) * 240u + x + i] = p[j * w + i];
+    dev_draws++;
 }
 static void lcd_sync(void) {}
 static void lcd_init(void) {}
@@ -302,6 +313,7 @@ static void dev_drain(void)
 /* one pass of main.c fm1_main's loop (what the browser has: the editor, the input, the saves when quiet; no USB
  * driver, update, UBOOT or master knob: MASTER is the page's) */
 static uint32_t dev_knob = 724;                   /* MASTER as the page turns it, 0..1023 as the ADC reads it (~2048) */
+static uint32_t dev_panel_on;                     /* a hardware FM-1 shows the screen (dev_panel) */
 static void dev_frame(void)
 {
     uint32_t k10 = ed_master ? (ed_master - 1u) * 1023u / 126u : dev_knob;   /* (main.c: the LIVE page's level, until
@@ -311,10 +323,73 @@ static void dev_frame(void)
     ed_service();
     ui_input();
     ui_leds();
+    if (dev_panel_on)                              /* (a hardware FM-1 shows the screen: main.c's ui_draw) */
+        ui_draw();
     autosave_tick();
     sections_flush();
     dev_drain();
 }
+
+/* ---- a hardware FM-1 through tuttidaw (tutti-plugin/0 section 12, web/plugin/fm1-panel.js): the panel's inputs by
+ * their printed labels (as Felucca's web/emu: buttons bit b = B_FX .., keys bit k, encoders by role), the screen and
+ * the LEDs (lit / dim / the backlight glow) for the unit */
+EXPORT void dev_panel(uint32_t on)
+{
+    dev_panel_on = on != 0u;
+    if (dev_panel_on)
+        ui.force = 1;                              /* (drawn whole: nothing was drawn while it was off) */
+}
+EXPORT void dev_buttons(uint32_t labels)
+{
+    uint32_t m = 0, b;
+    for (b = 0; b < NB; b++)
+        if ((labels >> b) & 1u)
+            m |= 1u << panel.btn[b];
+    fm1_in.buttons = m;
+}
+EXPORT void dev_keys(uint32_t mask) { fm1_in.notes = mask & ((1u << 27) - 1u); }
+EXPORT void dev_turn(uint32_t role, int32_t n)
+{
+    if (role < NE)
+        dev_enc[panel.enc[role] % 7u] += n * panel.dir[role];
+}
+static uint32_t dev_led_on(const uint8_t *l, uint32_t id)
+{
+    uint32_t c, r;
+    for (c = 0; c < FM1_NCOL; c++)
+        for (r = 1; r < 5u; r++)
+            if (FM1_KEYMAP[r][c] == (int8_t)id)
+                return (l[c] >> r) & 1u;
+    return 0;
+}
+static uint32_t dev_led_buttons(const uint8_t *l)
+{
+    uint32_t b, m = 0;
+    for (b = 0; b < NB; b++)
+        m |= dev_led_on(l, panel.btn[b]) << b;
+    return m;
+}
+static uint32_t dev_led_keys(const uint8_t *l)
+{
+    uint32_t k, m = 0;
+    for (k = 0; k < 27u; k++)
+        m |= dev_led_on(l, 14u + k) << k;
+    return m;
+}
+/* [lit buttons, lit keys, dim buttons, dim keys, 0, glow buttons, glow keys, 0] (web/emu/worklet.js's leds) */
+static uint32_t dev_leds_v[8];
+EXPORT uint32_t *dev_leds(void)
+{
+    dev_leds_v[0] = dev_led_buttons(fm1_led);
+    dev_leds_v[1] = dev_led_keys(fm1_led);
+    dev_leds_v[2] = dev_led_buttons(fm1_led_dim);
+    dev_leds_v[3] = dev_led_keys(fm1_led_dim);
+    dev_leds_v[5] = dev_led_buttons(fm1_led_bg);
+    dev_leds_v[6] = dev_led_keys(fm1_led_bg);
+    return dev_leds_v;
+}
+EXPORT uint16_t *dev_screen(void) { return dev_fb; }
+EXPORT uint32_t dev_screen_draws(void) { return dev_draws; }
 
 /* the device's clock (fm1_ms, TIMER4) to the frames rendered; a main loop pass every 15 ms, its wait loop (the
  * input, the editor's replies) on each millisecond between */
