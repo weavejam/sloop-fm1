@@ -5,8 +5,9 @@
 // into the emulator like the on-screen ones, and the emulator's screen and LEDs go back to the unit.
 //   - inputs by printed label: buttons fx .. octUp (bit b = the emulator's web_buttons bit b, panel.c B_FX ..), encoders
 //     select algorithm presets knob1..4 (web_enc's roles EN_SELECT ..), keys 0..26, MASTER 0..1023;
-//   - a control is held while the hardware or the page holds it: the page's own masks (its clicks, the computer keys)
-//     and the hardware's are posted OR-ed, neither releasing the other's press;
+//   - a control is held while the hardware or the page holds it: the hardware's masks go to the worklet `direct`, which
+//     keeps them apart from the page's own (its clicks, the computer keys), ORs the two and applies the hardware's at
+//     once - the page's stay queued there, each held HOLD_MS, which hardware playing must not wait behind;
 //   - `panel-frame`: the screen (240 x 240 RGB565 values; the worklet's fb holds each pixel in the panel's byte order,
 //     high byte first, so each is swapped - as web/emu/index.html does to paint it) and the LEDs (the worklet's leds:
 //     lit / dim masks), only while attached, when they change, at most 30 a second; detaching lifts what the hardware
@@ -63,7 +64,6 @@ export class PanelBridge {
     this.post = null;                                  // to the live device's worklet (its own postMessage)
     this.attached = false;
     this.hw = { buttons: 0, keys: 0 };
-    this.page = { buttons: 0, keys: 0 };
     this.fb = null;
     this.leds = null;
     this.dirty = { screen: false, leds: false };
@@ -71,19 +71,12 @@ export class PanelBridge {
     this.sentAt = -Infinity;
   }
 
-  // the live device's worklet node (a new one: a new device, nothing held)
+  // the live device's worklet node (a new one: a new device, nothing held). The page's own presses go to it as they
+  // did (queued there, each held a little: a click's down and up may come together); the hardware's go `direct` - the
+  // worklet keeps the two apart and ORs them, and applies the hardware's at once (no queue: no lag when playing)
   node(n) {
-    const post = n.port.postMessage.bind(n.port);
-    this.post = post;
+    this.post = n.port.postMessage.bind(n.port);
     this.hw = { buttons: 0, keys: 0 };
-    this.page = { buttons: 0, keys: 0 };
-    n.port.postMessage = (m, transfer) => {
-      if (m && (m.type === "buttons" || m.type === "keys")) {
-        this.page[m.type] = m.mask >>> 0;
-        return post({ ...m, mask: (this.page[m.type] | this.hw[m.type]) >>> 0 }, transfer);
-      }
-      return post(m, transfer);
-    };
     if (this.attached) this.onAttach(true);            // (a new device while shown: it shows too)
   }
 
@@ -142,8 +135,8 @@ export class PanelBridge {
 
   masks() {
     if (!this.post) return;
-    this.post({ type: "buttons", mask: (this.page.buttons | this.hw.buttons) >>> 0 });
-    this.post({ type: "keys", mask: (this.page.keys | this.hw.keys) >>> 0 });
+    this.post({ type: "buttons", mask: this.hw.buttons >>> 0, direct: true });
+    this.post({ type: "keys", mask: this.hw.keys >>> 0, direct: true });
   }
 
   flush() {

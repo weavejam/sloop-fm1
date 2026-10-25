@@ -13,3 +13,4 @@ node tests/preview_test.mjs
 if [ -f build/plugin-wasm/sloop.wasm ]; then node web/plugin/plugin_test.mjs build/plugin-wasm/sloop.wasm; fi
 # a hardware FM-1 through tuttidaw (web/plugin/fm1-panel.js, protocol 12)
 node web/plugin/fm1_panel_test.mjs
+node web/plugin/fm1_panel_worklet_test.mjs

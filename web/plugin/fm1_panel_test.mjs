@@ -33,12 +33,13 @@ assert.equal(sent[0].m.screen.byteLength, 240 * 240 * 2);
 assert.deepEqual(sent[0].transfer, [sent[0].m.screen]);
 assert.deepEqual(sent[0].m.leds, { buttons: { lit: 1 << 6, dim: 0 }, keys: { lit: 1, dim: 2 }, playGreen: false });
 
-// the page's own masks and the hardware's combine; neither lifts the other's press
+// the hardware's masks go `direct` (the worklet ORs them with the page's own, which pass as they were)
 node.port.postMessage({ type: "buttons", mask: 1 << 2 });          // the page holds ENV
+assert.deepEqual(posted.at(-1), { type: "buttons", mask: 1 << 2 });
 bridge.events([{ kind: "button", name: "scl", down: true }, { kind: "key", index: 3, down: true }]);
-assert.deepEqual(posted.slice(-2), [{ type: "buttons", mask: (1 << 2) | (1 << 1) }, { type: "keys", mask: 1 << 3 }]);
-node.port.postMessage({ type: "buttons", mask: 0 });               // the page lets ENV go: SCL still held
-assert.deepEqual(posted.at(-1), { type: "buttons", mask: 1 << 1 });
+assert.deepEqual(posted.slice(-2), [
+  { type: "buttons", mask: 1 << 1, direct: true }, { type: "keys", mask: 1 << 3, direct: true },
+]);
 
 // encoders by role, MASTER as it is; invalid events dropped
 posted.length = 0;
@@ -61,11 +62,10 @@ assert.equal(sent.length, 1);
 assert.equal(new Uint16Array(sent[0].m.screen)[0], 0xf800);
 assert.equal(sent[0].m.leds, undefined);
 
-// detaching lifts what the hardware holds (the page's own stay)
+// detaching lifts what the hardware holds (the page's own are the worklet's, untouched)
 posted.length = 0;
-node.port.postMessage({ type: "keys", mask: 1 << 9 });
 bridge.attach(false);
-assert.deepEqual(posted.slice(-2), [{ type: "buttons", mask: 0 }, { type: "keys", mask: 1 << 9 }]);
+assert.deepEqual(posted, [{ type: "buttons", mask: 0, direct: true }, { type: "keys", mask: 0, direct: true }]);
 sent.length = 0;
 bridge.frame({ type: "frame", fb: new Uint16Array(240 * 240) });
 run();
