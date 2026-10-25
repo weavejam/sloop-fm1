@@ -43,11 +43,13 @@ class SloopTutti extends AudioWorkletProcessor {
     this.sentSig = null;
     this.quanta = 0;
     this.playing = 0;
-    // a hardware FM-1 through tuttidaw (protocol 12, fm1-panel.js): the panel's presses held at least PANEL_HOLD_MS of
-    // the device's time each (its main loop reads them every 15 ms: a tap is never lost), the screen and LEDs out
+    // a hardware FM-1 through tuttidaw (protocol 12, fm1-panel.js): its presses go in at once (no lag when playing);
+    // only a lift that comes less than PANEL_HOLD_MS of the device's time after its kind last changed waits that long
+    // (SLOOP's main loop reads the levels every 15 ms: a tap is never lost). The screen and LEDs out
     this.panelOn = false;
     this.inq = [];
-    this.nextOk = 0;
+    this.cur = { buttons: 0, keys: 0 };
+    this.at = { buttons: -1e9, keys: -1e9 };
     this.pq = 0;
     this.sentDraws = -1;
     this.sentLeds = "";
@@ -79,7 +81,11 @@ class SloopTutti extends AudioWorkletProcessor {
       if (!ex) return;
       if (m.type === "sysex") { this.sx.push(m.data); this.pump(); return; }
       if (m.type === "midi") { const d = m.data; ex.dev_midi(d[0], d[1] ?? 0, d[2] ?? 0); return; }
-      if (m.type === "buttons" || m.type === "keys") { this.inq.push(m); return; }
+      if (m.type === "buttons" || m.type === "keys") {
+        if (!this.inq.length && this.ready(m)) this.press(m);
+        else this.inq.push(m);                         // (behind what waits: in order)
+        return;
+      }
       if (m.type === "enc") { ex.dev_turn(m.role >>> 0, m.n | 0); return; }
       if (m.type === "tutti-play") return this.schedule(m);
       if (m.type === "tutti-snapshot") {
@@ -109,6 +115,8 @@ class SloopTutti extends AudioWorkletProcessor {
     ex.tutti_live_mode(this.mode);
     ex.dev_panel(this.panelOn ? 1 : 0);                // (a new device: the hardware's screen as it was)
     this.inq = [];
+    this.cur = { buttons: 0, keys: 0 };
+    this.at = { buttons: -1e9, keys: -1e9 };
     this.sentDraws = -1;
     this.sentLeds = "";
     this.ex = ex;
@@ -141,15 +149,23 @@ class SloopTutti extends AudioWorkletProcessor {
     this.port.postMessage({ type: "sysex", data }, [data.buffer]);
   }
 
-  // the panel's presses in, one change per PANEL_HOLD_MS; the screen and LEDs out ~30 times a second while shown
+  // may this change of the panel go in now: presses always; a lift once its kind's last change is PANEL_HOLD_MS old
+  ready(m) {
+    const lifts = (this.cur[m.type] & ~(m.mask >>> 0)) >>> 0;
+    return !lifts || this.ex.dev_now_ms() - this.at[m.type] >= PANEL_HOLD_MS;
+  }
+  press(m) {
+    const mask = m.mask >>> 0;
+    if (m.type === "buttons") this.ex.dev_buttons(mask);
+    else this.ex.dev_keys(mask);
+    this.cur[m.type] = mask;
+    this.at[m.type] = this.ex.dev_now_ms();
+  }
+
+  // the panel's waiting changes in, in order; the screen and LEDs out ~30 times a second while shown
   panel() {
-    const ex = this.ex, now = ex.dev_now_ms();
-    while (this.inq.length && now - this.nextOk >= 0) {
-      const m = this.inq.shift();
-      if (m.type === "buttons") ex.dev_buttons(m.mask >>> 0);
-      else ex.dev_keys(m.mask >>> 0);
-      this.nextOk = now + PANEL_HOLD_MS;
-    }
+    const ex = this.ex;
+    while (this.inq.length && this.ready(this.inq[0])) this.press(this.inq.shift());
     if (!this.panelOn || ++this.pq < PANEL_QUANTA) return;
     this.pq = 0;
     const msg = { type: "frame" }, transfer = [];
