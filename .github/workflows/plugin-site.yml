@@ -81,17 +81,6 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
-      # Deployment (by the lead for now: https://sloop.plugins.tooljams.com, https://sloop-preview.plugins.tooljams.com),
-      # only from a push to main (the production site). To deploy from here: a Pages project, the secrets
-      # CLOUDFLARE_API_TOKEN (Pages: Edit) and CLOUDFLARE_ACCOUNT_ID, then uncomment:
-      # - name: Deploy to Cloudflare Pages
-      #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      #   uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd   # v3
-      #   with:
-      #     apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      #     accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      #     command: pages deploy build/plugin-site --project-name=sloop-tutti-plugin --branch=main
-
       # the sites on vm-tuttidaw-sg's Caddy (weavejam/tuttidaw deploy/plugins; Cloudflare Workers did not load from
       # mainland China): production and preview from main, preview from a pull request of this repo. The key runs
       # only receive.sh on the VM.
