@@ -91,3 +91,19 @@ jobs:
       #     apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       #     accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       #     command: pages deploy build/plugin-site --project-name=sloop-tutti-plugin --branch=main
+
+      # the sites on vm-tuttidaw-sg's Caddy (weavejam/tuttidaw deploy/plugins; Cloudflare Workers did not load from
+      # mainland China): production and preview from main, preview from a pull request of this repo. The key runs
+      # only receive.sh on the VM.
+      - name: Deploy the sites
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        env:
+          KEY: ${{ secrets.PLUGIN_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.PLUGIN_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/plugin_deploy && chmod 600 ~/.ssh/plugin_deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          up() { tar -C "$1" -czf - . | ssh -i ~/.ssh/plugin_deploy -o IdentitiesOnly=yes lubo@4.145.89.54 "$2"; }
+          if [ "$GITHUB_EVENT_NAME" = push ]; then up build/plugin-site sloop.plugins.tooljams.com; fi
+          up build/plugin-site-preview sloop-preview.plugins.tooljams.com
