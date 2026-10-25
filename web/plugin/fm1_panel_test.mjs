@@ -18,7 +18,8 @@ bridge.node(node);
 const run = () => { while (timers.length) { const t = timers.shift(); now = Math.max(now, t.at); t.fn(); } };
 
 // nothing goes to the host until attached; events before it are ignored
-bridge.frame({ type: "frame", fb: new Uint16Array(240 * 240).fill(7), leds: [1 << 6, 1, 0, 2, 0, 0, 0, 0] });
+// (the worklet's fb is in the panel's byte order: Felucca's tile grey RGB565 0x2124 is 0x2421 there)
+bridge.frame({ type: "frame", fb: new Uint16Array(240 * 240).fill(0x2421), leds: [1 << 6, 1, 0, 2, 0, 0, 0, 0] });
 bridge.events([{ kind: "key", index: 0, down: true }]);
 assert.equal(sent.length, 0);
 assert.equal(posted.length, 0);
@@ -27,7 +28,7 @@ assert.equal(posted.length, 0);
 bridge.attach(true);
 assert.equal(sent.length, 1);
 assert.equal(sent[0].m.type, "panel-frame");
-assert.equal(new Uint16Array(sent[0].m.screen)[0], 7);
+assert.equal(new Uint16Array(sent[0].m.screen)[0], 0x2124);           // RGB565 values: grey, not green
 assert.equal(sent[0].m.screen.byteLength, 240 * 240 * 2);
 assert.deepEqual(sent[0].transfer, [sent[0].m.screen]);
 assert.deepEqual(sent[0].m.leds, { buttons: { lit: 1 << 6, dim: 0 }, keys: { lit: 1, dim: 2 }, playGreen: false });
@@ -53,11 +54,11 @@ assert.deepEqual(posted, [{ type: "enc", role: 4, n: -3 }, { type: "master", val
 // frames at most 30 a second: the latest goes when the time comes
 sent.length = 0;
 bridge.frame({ type: "frame", fb: new Uint16Array(240 * 240).fill(1) });
-bridge.frame({ type: "frame", fb: new Uint16Array(240 * 240).fill(2) });
+bridge.frame({ type: "frame", fb: new Uint16Array(240 * 240).fill(0x00f8) });   // red, panel order
 assert.equal(sent.length, 0);
 run();
 assert.equal(sent.length, 1);
-assert.equal(new Uint16Array(sent[0].m.screen)[0], 2);
+assert.equal(new Uint16Array(sent[0].m.screen)[0], 0xf800);
 assert.equal(sent[0].m.leds, undefined);
 
 // detaching lifts what the hardware holds (the page's own stay)

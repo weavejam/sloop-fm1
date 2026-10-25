@@ -7,8 +7,10 @@
 //     select algorithm presets knob1..4 (web_enc's roles EN_SELECT ..), keys 0..26, MASTER 0..1023;
 //   - a control is held while the hardware or the page holds it: the page's own masks (its clicks, the computer keys)
 //     and the hardware's are posted OR-ed, neither releasing the other's press;
-//   - `panel-frame`: the screen (240 x 240 RGB565, the worklet's fb as it is) and the LEDs (the worklet's leds: lit /
-//     dim masks), only while attached, when they change, at most 30 a second; detaching lifts what the hardware holds.
+//   - `panel-frame`: the screen (240 x 240 RGB565 values; the worklet's fb holds each pixel in the panel's byte order,
+//     high byte first, so each is swapped - as web/emu/index.html does to paint it) and the LEDs (the worklet's leds:
+//     lit / dim masks), only while attached, when they change, at most 30 a second; detaching lifts what the hardware
+//     holds.
 // Shared as is by Felucca, JIANT FM and SLOOP (the same emulator interface: web/emu/worklet.js).
 
 export const BUTTONS = ["fx", "scl", "env", "lfo", "edit", "glo", "home", "save", "arp", "seq", "play", "rec",
@@ -17,6 +19,16 @@ export const ENCODERS = ["select", "algorithm", "presets", "knob1", "knob2", "kn
 export const MAX_EVENTS = 64;
 const FRAME_MS = 1000 / 30;
 const ALL_KEYS = (1 << 27) - 1;
+
+// the worklet's fb (each pixel high byte first, as the panel takes it) -> RGB565 values (protocol 12), a copy
+export function screenRgb565(fb) {
+  const out = new Uint16Array(fb.length);
+  for (let i = 0; i < fb.length; i++) {
+    const v = fb[i];
+    out[i] = ((v >> 8) | (v << 8)) & 0xffff;
+  }
+  return out;
+}
 
 // the worklet's leds ([lit buttons | PLAY green << 14, lit keys, dim buttons, dim keys, dim level, breath buttons,
 // breath keys, mid keys]) -> the protocol's (a lit LED is not also dim; breath and mid show as the glow)
@@ -143,7 +155,7 @@ export class PanelBridge {
     }
     const msg = { type: "panel-frame" }, transfer = [];
     if (this.dirty.screen && this.fb) {
-      const copy = new Uint16Array(this.fb);           // (the page keeps painting its own)
+      const copy = screenRgb565(this.fb);              // (a copy: the page keeps painting its own)
       msg.screen = copy.buffer;
       transfer.push(copy.buffer);
     }
